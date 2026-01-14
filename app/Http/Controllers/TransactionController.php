@@ -43,7 +43,7 @@ class TransactionController extends Controller
         return response()->json(['message' => 'Success', 'data' => $transaction]);
     }
 
-   public function returnBook(Request $request)
+    public function returnBook(Request $request)
     {
         $request->validate([
             'asset_code' => 'required|exists:book_assets,asset_code'
@@ -64,7 +64,7 @@ class TransactionController extends Controller
         // 3. Check for Late Return
         $today = now();
         $dueDate = \Carbon\Carbon::parse($transaction->due_date);
-        
+
         $penalty = 0;
         $daysLate = 0;
 
@@ -96,7 +96,7 @@ class TransactionController extends Controller
     public function history(Request $request)
     {
         // If Admin, show all. If Student, show only theirs.
-        $query = Transaction::with(['user', 'bookAsset.title']);
+        $query = Transaction::with(['user', 'bookAsset.bookTitle']);
 
         if ($request->user()->role === 'student') {
             $query->where('user_id', $request->user()->id);

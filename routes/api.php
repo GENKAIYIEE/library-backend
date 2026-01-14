@@ -21,11 +21,11 @@ Route::get('/books/search/{keyword}', [BookController::class, 'search']);
 |--------------------------------------------------------------------------
 */
 Route::group(['middleware' => ['auth:sanctum']], function () {
-    
+
     // Auth
     Route::get('/transactions', [App\Http\Controllers\TransactionController::class, 'index']);
     Route::post('/logout', [AuthController::class, 'logout']);
-    Route::get('/user', function(Request $request) {
+    Route::get('/user', function (Request $request) {
         return $request->user();
     });
 
@@ -40,5 +40,12 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     // Student Management
     Route::get('/students', [App\Http\Controllers\StudentController::class, 'index']);
     Route::post('/students', [App\Http\Controllers\StudentController::class, 'store']);
-    Route::delete('/students/{id}', [App\Http\Controllers\StudentController::class, 'destroy']);    
+    Route::delete('/students/{id}', [App\Http\Controllers\StudentController::class, 'destroy']);
+
+    // Dashboard Stats
+    Route::get('/dashboard/stats', [BookController::class, 'dashboardStats']);
+
+    // Book CRUD (Update & Delete)
+    Route::put('/books/{id}', [BookController::class, 'update']);
+    Route::delete('/books/{id}', [BookController::class, 'destroy']);
 });

@@ -10,7 +10,24 @@ use Carbon\Carbon;
 
 class TransactionController extends Controller
 {
-    // 1. BORROW A BOOK (Scan to Borrow)
+    // Course-based loan periods (in days)
+    private function getLoanDays($course)
+    {
+        $periods = [
+            'Maritime' => 1,
+            'BSIT' => 7,
+            'BSED' => 7,
+            'BEED' => 7,
+            'BSHM' => 7,
+            'BS Criminology' => 7,
+            'BSBA' => 7,
+            'BS Tourism' => 7
+        ];
+
+        return $periods[$course] ?? 7; // Default 7 days
+    }
+
+    // 1. BORROW A BOOK (With Course-Specific Rules)
     public function borrow(Request $request)
     {
         // 1. Validate
@@ -23,24 +40,59 @@ class TransactionController extends Controller
         $student = \App\Models\User::where('student_id', $request->student_id)->first();
         $bookAsset = \App\Models\BookAsset::where('asset_code', $request->asset_code)->first();
 
-        // 3. Check if Book is available
+        // 3. CLEARANCE CHECK: Block if student has pending fines
+        $pendingFines = Transaction::where('user_id', $student->id)
+            ->where('payment_status', 'pending')
+            ->sum('penalty_amount');
+
+        if ($pendingFines > 0) {
+            return response()->json([
+                'message' => 'Student has pending fines of ₱' . number_format($pendingFines, 2) . '. Please settle before borrowing.',
+                'blocked' => true,
+                'pending_fines' => $pendingFines
+            ], 403);
+        }
+
+        // 4. Check if student already has too many books (optional limit)
+        $activeLoans = Transaction::where('user_id', $student->id)
+            ->whereNull('returned_at')
+            ->count();
+
+        if ($activeLoans >= 3) {
+            return response()->json([
+                'message' => 'Student has reached the maximum limit of 3 active loans.',
+                'blocked' => true
+            ], 403);
+        }
+
+        // 5. Check if Book is available
         if ($bookAsset->status !== 'available') {
             return response()->json(['message' => 'Book is already borrowed!'], 400);
         }
 
-        // 4. Create Transaction
+        // 6. Calculate due date based on course
+        $loanDays = $this->getLoanDays($student->course);
+        $dueDate = now()->addDays($loanDays);
+
+        // 7. Create Transaction
         $transaction = Transaction::create([
             'user_id' => $student->id,
             'book_asset_id' => $bookAsset->id,
             'borrowed_at' => now(),
-            'due_date' => now()->addDays(7), // Due in 7 days
-            'processed_by' => $request->user()->id // <--- THIS FIXES THE ERROR
+            'due_date' => $dueDate,
+            'processed_by' => $request->user()->id
         ]);
 
-        // 5. Update Book Status
+        // 8. Update Book Status
         $bookAsset->update(['status' => 'borrowed']);
 
-        return response()->json(['message' => 'Success', 'data' => $transaction]);
+        return response()->json([
+            'message' => 'Success! Book borrowed.',
+            'data' => $transaction,
+            'loan_days' => $loanDays,
+            'due_date' => $dueDate->format('Y-m-d'),
+            'course' => $student->course
+        ]);
     }
 
     public function returnBook(Request $request)

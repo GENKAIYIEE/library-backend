@@ -17,6 +17,8 @@ Route::get('/books', [BookController::class, 'index']);
 Route::get('/books/search/{keyword}', [BookController::class, 'search']);
 Route::get('/books/available', [BookController::class, 'getAvailableBooks']);
 Route::get('/books/borrowed', [BookController::class, 'getBorrowedBooks']);
+Route::get('/books/lookup/{barcode}', [BookController::class, 'lookup']);
+Route::get('/students/{studentId}/clearance', [BookController::class, 'checkClearance']);
 
 /*
 |--------------------------------------------------------------------------

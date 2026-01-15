@@ -22,6 +22,8 @@ class ReportController extends Controller
         $query = Transaction::query()
             ->join('book_assets', 'transactions.book_asset_id', '=', 'book_assets.id')
             ->join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
+            ->whereNull('book_assets.deleted_at')
+            ->whereNull('book_titles.deleted_at')
             ->select(
                 'book_titles.id',
                 'book_titles.title',
@@ -54,6 +56,7 @@ class ReportController extends Controller
     {
         $query = Transaction::query()
             ->join('users', 'transactions.user_id', '=', 'users.id')
+            ->whereNull('users.deleted_at')
             ->select(
                 'users.id',
                 'users.name',
@@ -195,6 +198,8 @@ class ReportController extends Controller
         $query = Transaction::query()
             ->join('book_assets', 'transactions.book_asset_id', '=', 'book_assets.id')
             ->join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
+            ->whereNull('book_assets.deleted_at')
+            ->whereNull('book_titles.deleted_at')
             ->select(
                 'book_titles.title',
                 'book_titles.author',
@@ -217,6 +222,7 @@ class ReportController extends Controller
     {
         $query = Transaction::query()
             ->join('users', 'transactions.user_id', '=', 'users.id')
+            ->whereNull('users.deleted_at')
             ->select(
                 'users.name',
                 'users.student_id',

@@ -8,6 +8,32 @@ use Illuminate\Support\Facades\Hash;
 
 class StudentController extends Controller
 {
+    /**
+     * Generate the next sequential student ID.
+     * Format: YYYY-XXXX (e.g., 2026-0001, 2026-0002)
+     */
+    private function generateStudentId(): string
+    {
+        $year = date('Y');
+        $prefix = $year . '-';
+
+        // Find the latest student_id for the current year
+        $latestStudent = User::where('student_id', 'like', $prefix . '%')
+            ->orderBy('student_id', 'desc')
+            ->first();
+
+        if ($latestStudent) {
+            // Extract the sequence number and increment
+            $lastSequence = (int) substr($latestStudent->student_id, strlen($prefix));
+            $nextSequence = $lastSequence + 1;
+        } else {
+            $nextSequence = 1;
+        }
+
+        // Format with leading zeros (4 digits)
+        return $prefix . str_pad($nextSequence, 4, '0', STR_PAD_LEFT);
+    }
+
     // 1. GET ALL STUDENTS
     public function index()
     {
@@ -20,21 +46,23 @@ class StudentController extends Controller
     {
         $request->validate([
             'name' => 'required|string',
-            'student_id' => 'required|string|unique:users,student_id',
             'course' => 'required|string',
             'year_level' => 'required|integer',
             'section' => 'required|string',
             'email' => 'nullable|email'
         ]);
 
+        // Auto-generate the student ID
+        $studentId = $this->generateStudentId();
+
         $user = User::create([
             'name' => $request->name,
-            'student_id' => $request->student_id,
+            'student_id' => $studentId,
             'course' => $request->course,
             'year_level' => $request->year_level,
             'section' => $request->section,
-            'email' => $request->email ?? $request->student_id . '@pclu.edu', // Auto-generate email if empty
-            'password' => Hash::make('password'), // Default password is "password"
+            'email' => $request->email ?? $studentId . '@pclu.edu',
+            'password' => Hash::make('password'),
             'role' => 'student'
         ]);
 
@@ -60,8 +88,7 @@ class StudentController extends Controller
             'year_level' => 'required|integer',
             'section' => 'required|string',
             'students' => 'required|array|min:1',
-            'students.*.name' => 'required|string',
-            'students.*.student_id' => 'required|string|distinct'
+            'students.*.name' => 'required|string'
         ]);
 
         $created = [];
@@ -71,32 +98,21 @@ class StudentController extends Controller
 
         try {
             foreach ($request->students as $index => $studentData) {
-                // Check if student_id already exists
-                if (User::where('student_id', $studentData['student_id'])->exists()) {
-                    $errors[] = "Row " . ($index + 1) . ": Student ID '{$studentData['student_id']}' already exists.";
-                    continue;
-                }
+                // Auto-generate unique student ID for each student
+                $studentId = $this->generateStudentId();
 
                 $user = User::create([
                     'name' => $studentData['name'],
-                    'student_id' => $studentData['student_id'],
+                    'student_id' => $studentId,
                     'course' => $request->course,
                     'year_level' => $request->year_level,
                     'section' => $request->section,
-                    'email' => $studentData['student_id'] . '@pclu.edu',
+                    'email' => $studentId . '@pclu.edu',
                     'password' => Hash::make('password'),
                     'role' => 'student'
                 ]);
 
                 $created[] = $user;
-            }
-
-            if (count($errors) > 0 && count($created) === 0) {
-                \DB::rollBack();
-                return response()->json([
-                    'message' => 'No students were registered.',
-                    'errors' => $errors
-                ], 422);
             }
 
             \DB::commit();

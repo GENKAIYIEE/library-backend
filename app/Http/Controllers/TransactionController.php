@@ -78,7 +78,8 @@ class TransactionController extends Controller
         // 4. Update the Record
         $transaction->update([
             'returned_at' => now(),
-            'penalty_amount' => $penalty
+            'penalty_amount' => $penalty,
+            'payment_status' => $penalty > 0 ? 'pending' : 'paid'
         ]);
 
         // 5. Make the book available again
@@ -112,5 +113,63 @@ class TransactionController extends Controller
             ->get();
 
         return response()->json($transactions);
+    }
+
+    /**
+     * Mark a fine as paid
+     * 
+     * @param int $id - Transaction ID
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function markAsPaid($id)
+    {
+        $transaction = Transaction::find($id);
+
+        if (!$transaction) {
+            return response()->json(['message' => 'Transaction not found'], 404);
+        }
+
+        if ($transaction->penalty_amount <= 0) {
+            return response()->json(['message' => 'No penalty to pay'], 400);
+        }
+
+        if ($transaction->payment_status === 'paid') {
+            return response()->json(['message' => 'Already paid'], 400);
+        }
+
+        $transaction->update([
+            'payment_status' => 'paid',
+            'payment_date' => now()
+        ]);
+
+        return response()->json([
+            'message' => 'Payment recorded successfully',
+            'transaction' => $transaction->load(['user', 'bookAsset.bookTitle'])
+        ]);
+    }
+
+    /**
+     * Waive a fine (Admin only)
+     * 
+     * @param int $id - Transaction ID
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function waiveFine($id)
+    {
+        $transaction = Transaction::find($id);
+
+        if (!$transaction) {
+            return response()->json(['message' => 'Transaction not found'], 404);
+        }
+
+        $transaction->update([
+            'payment_status' => 'waived',
+            'payment_date' => now()
+        ]);
+
+        return response()->json([
+            'message' => 'Fine waived successfully',
+            'transaction' => $transaction->load(['user', 'bookAsset.bookTitle'])
+        ]);
     }
 }

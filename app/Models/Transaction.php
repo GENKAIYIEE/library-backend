@@ -9,14 +9,25 @@ class Transaction extends Model
 {
     use HasFactory;
 
-   protected $fillable = [
+    protected $fillable = [
         'user_id',
         'book_asset_id',
         'borrowed_at',
         'due_date',
         'returned_at',
         'processed_by',
-        'penalty_amount' // <--- NEW LINE
+        'penalty_amount',
+        'payment_status',
+        'payment_date'
+    ];
+
+    // Cast dates properly
+    protected $casts = [
+        'borrowed_at' => 'datetime',
+        'due_date' => 'date',
+        'returned_at' => 'datetime',
+        'payment_date' => 'datetime',
+        'penalty_amount' => 'decimal:2'
     ];
 
     // Link to the Student

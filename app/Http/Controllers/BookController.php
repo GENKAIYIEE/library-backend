@@ -12,9 +12,11 @@ class BookController extends Controller
     public function index()
     {
         // Get books with a count of how many are 'available'
-        return BookTitle::withCount(['assets as available_copies' => function ($query) {
-            $query->where('status', 'available');
-        }])->get();
+        return BookTitle::withCount([
+            'assets as available_copies' => function ($query) {
+                $query->where('status', 'available');
+            }
+        ])->get();
     }
 
     // 2. SEARCH BOOKS
@@ -74,7 +76,8 @@ class BookController extends Controller
     public function update(Request $request, $id)
     {
         $book = BookTitle::find($id);
-        if (!$book) return response()->json(['message' => 'Not found'], 404);
+        if (!$book)
+            return response()->json(['message' => 'Not found'], 404);
 
         $request->validate([
             'title' => 'required',
@@ -90,9 +93,57 @@ class BookController extends Controller
     public function destroy($id)
     {
         $book = BookTitle::find($id);
-        if (!$book) return response()->json(['message' => 'Not found'], 404);
+        if (!$book)
+            return response()->json(['message' => 'Not found'], 404);
 
         $book->delete();
         return response()->json(['message' => 'Deleted successfully']);
+    }
+
+    // GET AVAILABLE BOOKS (for borrowing dropdown)
+    public function getAvailableBooks()
+    {
+        $availableBooks = BookAsset::where('status', 'available')
+            ->with('bookTitle:id,title,author')
+            ->orderBy('asset_code')
+            ->get()
+            ->map(function ($asset) {
+                return [
+                    'asset_code' => $asset->asset_code,
+                    'title' => $asset->bookTitle->title ?? 'Unknown',
+                    'author' => $asset->bookTitle->author ?? 'Unknown',
+                    'location' => $asset->building . ' - ' . $asset->aisle . ' - ' . $asset->shelf
+                ];
+            });
+
+        return response()->json($availableBooks);
+    }
+
+    // GET BORROWED BOOKS (for return dropdown)
+    public function getBorrowedBooks()
+    {
+        $borrowedBooks = BookAsset::where('status', 'borrowed')
+            ->with(['bookTitle:id,title,author'])
+            ->orderBy('asset_code')
+            ->get()
+            ->map(function ($asset) {
+                // Get the active transaction for this book
+                $transaction = \App\Models\Transaction::where('book_asset_id', $asset->id)
+                    ->whereNull('returned_at')
+                    ->with('user:id,name,student_id')
+                    ->first();
+
+                return [
+                    'asset_code' => $asset->asset_code,
+                    'title' => $asset->bookTitle->title ?? 'Unknown',
+                    'author' => $asset->bookTitle->author ?? 'Unknown',
+                    'borrower' => $transaction->user->name ?? 'Unknown',
+                    'student_id' => $transaction->user->student_id ?? 'N/A',
+                    'due_date' => $transaction->due_date ?? null,
+                    'is_overdue' => $transaction && $transaction->due_date ? now()->gt($transaction->due_date) : false
+                ];
+            });
+
+        return response()->json($borrowedBooks);
     }
 }

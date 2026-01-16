@@ -53,8 +53,13 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::delete('/students/{id}', [App\Http\Controllers\StudentController::class, 'destroy']);
     Route::post('/students/batch', [App\Http\Controllers\StudentController::class, 'batchStore']);
 
+    // Gamification: Leaderboard & Achievements
+    Route::get('/students/leaderboard', [App\Http\Controllers\StudentController::class, 'leaderboard']);
+    Route::get('/students/{id}/achievements', [App\Http\Controllers\StudentController::class, 'achievements']);
+
     // Dashboard Stats
     Route::get('/dashboard/stats', [BookController::class, 'dashboardStats']);
+    Route::get('/dashboard/books', [BookController::class, 'getDashboardBooks']);
 
     // Book CRUD (Update & Delete)
     Route::put('/books/{id}', [BookController::class, 'update']);

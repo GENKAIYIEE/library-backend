@@ -146,6 +146,37 @@ class BookController extends Controller
         return $mapping[$course] ?? [];
     }
 
+    // NEW: Get books for Dashboard Grid (recent available ones)
+    public function getDashboardBooks(Request $request)
+    {
+        $limit = $request->query('limit', 12); // Default 12 items
+
+        // Get distinct book titles that have at least one available copy
+        $books = BookTitle::whereHas('assets', function ($query) {
+            $query->where('status', 'available');
+        })
+            ->withCount([
+                'assets as available_copies' => function ($query) {
+                    $query->where('status', 'available');
+                }
+            ])
+            ->latest() // Most recently added titles first
+            ->take($limit)
+            ->get()
+            ->map(function ($book) {
+                return [
+                    'id' => $book->id,
+                    'title' => $book->title,
+                    'author' => $book->author,
+                    'category' => $book->category,
+                    'cover_image' => $book->cover_image, // Make sure this is the full URL or relative path handled by frontend
+                    'available_copies' => $book->available_copies
+                ];
+            });
+
+        return response()->json($books);
+    }
+
     // GET AVAILABLE BOOKS (for borrowing dropdown) - With Major Prioritization
     public function getAvailableBooks(Request $request)
     {
@@ -250,51 +281,99 @@ class BookController extends Controller
     /**
      * Lookup a book by barcode for instant scanning
      * Returns book details, availability, and current borrower if applicable
+     * Searches both BookAsset (by asset_code) and BookTitle (by ISBN)
      */
     public function lookup($barcode)
     {
+        // First, try to find by asset_code in BookAsset
         $bookAsset = BookAsset::where('asset_code', $barcode)
             ->with('bookTitle')
             ->first();
 
-        if (!$bookAsset) {
-            return response()->json([
-                'found' => false,
-                'message' => 'Book not found with barcode: ' . $barcode
-            ], 404);
+        if ($bookAsset) {
+            // Found by asset_code - return full asset details
+            $response = [
+                'found' => true,
+                'asset_code' => $bookAsset->asset_code,
+                'status' => $bookAsset->status,
+                'title' => $bookAsset->bookTitle->title ?? 'Unknown',
+                'author' => $bookAsset->bookTitle->author ?? 'Unknown',
+                'category' => $bookAsset->bookTitle->category ?? 'Unknown',
+                'location' => $bookAsset->building . ' - ' . $bookAsset->aisle . ' - ' . $bookAsset->shelf,
+                'borrower' => null,
+                'due_date' => null,
+                'is_overdue' => false
+            ];
+
+            // If book is borrowed, get borrower info
+            if ($bookAsset->status === 'borrowed') {
+                $transaction = \App\Models\Transaction::where('book_asset_id', $bookAsset->id)
+                    ->whereNull('returned_at')
+                    ->with('user:id,name,student_id,course')
+                    ->first();
+
+                if ($transaction) {
+                    $response['borrower'] = [
+                        'name' => $transaction->user->name,
+                        'student_id' => $transaction->user->student_id,
+                        'course' => $transaction->user->course
+                    ];
+                    $response['due_date'] = $transaction->due_date;
+                    $response['is_overdue'] = now()->gt($transaction->due_date);
+                }
+            }
+
+            return response()->json($response);
         }
 
-        $response = [
-            'found' => true,
-            'asset_code' => $bookAsset->asset_code,
-            'status' => $bookAsset->status,
-            'title' => $bookAsset->bookTitle->title ?? 'Unknown',
-            'author' => $bookAsset->bookTitle->author ?? 'Unknown',
-            'category' => $bookAsset->bookTitle->category ?? 'Unknown',
-            'location' => $bookAsset->building . ' - ' . $bookAsset->aisle . ' - ' . $bookAsset->shelf,
-            'borrower' => null,
-            'due_date' => null,
-            'is_overdue' => false
-        ];
+        // Second, try to find by ISBN in BookTitle (for newly registered books without physical copies)
+        $bookTitle = BookTitle::where('isbn', $barcode)->first();
 
-        // If book is borrowed, get borrower info
-        if ($bookAsset->status === 'borrowed') {
-            $transaction = \App\Models\Transaction::where('book_asset_id', $bookAsset->id)
-                ->whereNull('returned_at')
-                ->with('user:id,name,student_id,course')
+        if ($bookTitle) {
+            // Found by ISBN - check if it has any physical copies
+            $availableAsset = BookAsset::where('book_title_id', $bookTitle->id)
+                ->where('status', 'available')
                 ->first();
 
-            if ($transaction) {
-                $response['borrower'] = [
-                    'name' => $transaction->user->name,
-                    'student_id' => $transaction->user->student_id,
-                    'course' => $transaction->user->course
-                ];
-                $response['due_date'] = $transaction->due_date;
-                $response['is_overdue'] = now()->gt($transaction->due_date);
+            if ($availableAsset) {
+                // Has available copy - return that asset
+                return response()->json([
+                    'found' => true,
+                    'asset_code' => $availableAsset->asset_code,
+                    'status' => $availableAsset->status,
+                    'title' => $bookTitle->title,
+                    'author' => $bookTitle->author,
+                    'category' => $bookTitle->category,
+                    'location' => $availableAsset->building . ' - ' . $availableAsset->aisle . ' - ' . $availableAsset->shelf,
+                    'borrower' => null,
+                    'due_date' => null,
+                    'is_overdue' => false
+                ]);
             }
+
+            // Book title exists but no physical copies yet
+            return response()->json([
+                'found' => true,
+                'needs_physical_copy' => true,
+                'book_title_id' => $bookTitle->id,
+                'status' => 'no_copies',
+                'title' => $bookTitle->title,
+                'author' => $bookTitle->author,
+                'category' => $bookTitle->category,
+                'isbn' => $bookTitle->isbn,
+                'location' => 'N/A - No physical copies registered',
+                'borrower' => null,
+                'due_date' => null,
+                'is_overdue' => false,
+                'message' => 'This book is registered but has no physical copies. Please add a physical copy first.'
+            ]);
         }
 
-        return response()->json($response);
+        // Not found anywhere
+        return response()->json([
+            'found' => false,
+            'scanned_code' => $barcode,
+            'message' => 'Book not found with barcode: ' . $barcode
+        ], 404);
     }
 }

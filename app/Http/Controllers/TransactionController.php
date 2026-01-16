@@ -72,13 +72,13 @@ class TransactionController extends Controller
 
         // 6. Calculate due date based on course
         $loanDays = $this->getLoanDays($student->course);
-        $dueDate = now()->addDays($loanDays);
+        $dueDate = Carbon::now()->addDays($loanDays);
 
         // 7. Create Transaction
         $transaction = Transaction::create([
             'user_id' => $student->id,
             'book_asset_id' => $bookAsset->id,
-            'borrowed_at' => now(),
+            'borrowed_at' => Carbon::now(),
             'due_date' => $dueDate,
             'processed_by' => $request->user()->id
         ]);
@@ -113,23 +113,27 @@ class TransactionController extends Controller
             return response()->json(['message' => 'This book is not currently borrowed!'], 400);
         }
 
-        // 3. Check for Late Return
-        $today = now();
-        $dueDate = \Carbon\Carbon::parse($transaction->due_date);
+        // 3. Check for Late Return (Strict Day Comparison)
+        $now = Carbon::now();
+        $dueDate = Carbon::parse($transaction->due_date)->endOfDay(); // End of due date (23:59:59)
 
         $penalty = 0;
         $daysLate = 0;
 
-        // If Today is AFTER the Due Date
-        if ($today->gt($dueDate)) {
-            $daysLate = $today->diffInDays($dueDate);
+        // If 'Now' is strictly after Due Date
+        if ($now->gt($dueDate)) {
+            // Calculate full days difference
+            // We use startOfDay to compare "dates" regardless of "time"
+            $diffInDays = $dueDate->startOfDay()->diffInDays($now->startOfDay());
+            $daysLate = $diffInDays;
+
             $finePerDay = 5.00; // <--- RULE: 5 PESOS PER DAY
             $penalty = $daysLate * $finePerDay;
         }
 
         // 4. Update the Record
         $transaction->update([
-            'returned_at' => now(),
+            'returned_at' => Carbon::now(),
             'penalty_amount' => $penalty,
             'payment_status' => $penalty > 0 ? 'pending' : 'paid'
         ]);

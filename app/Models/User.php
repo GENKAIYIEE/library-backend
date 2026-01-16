@@ -41,4 +41,12 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
     ];
+
+    /**
+     * Relationship: User has many Transactions (borrow history)
+     */
+    public function transactions()
+    {
+        return $this->hasMany(Transaction::class);
+    }
 }

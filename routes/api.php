@@ -20,6 +20,12 @@ Route::get('/books/borrowed', [BookController::class, 'getBorrowedBooks']);
 Route::get('/books/lookup/{barcode}', [BookController::class, 'lookup']);
 Route::get('/students/{studentId}/clearance', [BookController::class, 'checkClearance']);
 
+// Public (Kiosk) Routes
+Route::prefix('public')->group(function () {
+    Route::get('/books', [App\Http\Controllers\PublicBookController::class, 'index']);
+    Route::get('/books/{id}', [App\Http\Controllers\PublicBookController::class, 'show']);
+});
+
 /*
 |--------------------------------------------------------------------------
 | Protected Routes (Must have Token)
@@ -60,10 +66,18 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     // Dashboard Stats
     Route::get('/dashboard/stats', [BookController::class, 'dashboardStats']);
     Route::get('/dashboard/books', [BookController::class, 'getDashboardBooks']);
+    // Analytics
+    Route::get('/analytics/trends', [App\Http\Controllers\AnalyticsController::class, 'monthlyTrends']);
+    Route::get('/analytics/categories', [App\Http\Controllers\AnalyticsController::class, 'categoryPopularity']);
 
     // Book CRUD (Update & Delete)
     Route::put('/books/{id}', [BookController::class, 'update']);
     Route::delete('/books/{id}', [BookController::class, 'destroy']);
+
+    // Notifications
+    Route::get('/notifications', [App\Http\Controllers\NotificationController::class, 'index']);
+    Route::post('/notifications/{id}/read', [App\Http\Controllers\NotificationController::class, 'markAsRead']);
+    Route::post('/notifications/read-all', [App\Http\Controllers\NotificationController::class, 'markAllRead']);
 
     // Reports (NEW)
     Route::get('/reports/most-borrowed', [ReportController::class, 'mostBorrowed']);

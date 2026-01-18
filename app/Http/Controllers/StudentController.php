@@ -73,7 +73,33 @@ class StudentController extends Controller
         return response()->json($user);
     }
 
-    // 3. DELETE STUDENT
+    // 3. UPDATE STUDENT
+    public function update(Request $request, $id)
+    {
+        $user = User::find($id);
+
+        if (!$user || $user->role !== 'student') {
+            return response()->json(['message' => 'Student not found'], 404);
+        }
+
+        $request->validate([
+            'name' => 'required|string',
+            'course' => 'required|string',
+            'year_level' => 'required|integer',
+            'section' => 'required|string',
+        ]);
+
+        $user->update([
+            'name' => $request->name,
+            'course' => $request->course,
+            'year_level' => $request->year_level,
+            'section' => $request->section,
+        ]);
+
+        return response()->json($user);
+    }
+
+    // 4. DELETE STUDENT
     public function destroy($id)
     {
         $user = User::find($id);

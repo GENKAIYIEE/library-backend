@@ -56,6 +56,7 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     // Student Management
     Route::get('/students', [App\Http\Controllers\StudentController::class, 'index']);
     Route::post('/students', [App\Http\Controllers\StudentController::class, 'store']);
+    Route::put('/students/{id}', [App\Http\Controllers\StudentController::class, 'update']);
     Route::delete('/students/{id}', [App\Http\Controllers\StudentController::class, 'destroy']);
     Route::post('/students/batch', [App\Http\Controllers\StudentController::class, 'batchStore']);
 

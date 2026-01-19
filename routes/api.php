@@ -6,6 +6,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\BookController;
 use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\ReportController;
+use App\Http\Controllers\UserController;
 
 /*
 |--------------------------------------------------------------------------
@@ -86,4 +87,9 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/reports/penalties', [ReportController::class, 'penalties']);
     Route::get('/reports/department', [ReportController::class, 'departmentStats']);
     Route::get('/reports/export/{type}', [ReportController::class, 'exportCsv']);
+
+    // User Management (Admin Only)
+    Route::get('/users', [UserController::class, 'index']);
+    Route::post('/users', [UserController::class, 'store']);
+    Route::post('/users/check-unique', [UserController::class, 'checkUnique']);
 });

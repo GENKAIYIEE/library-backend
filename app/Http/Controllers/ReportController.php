@@ -29,9 +29,11 @@ class ReportController extends Controller
                 'book_titles.title',
                 'book_titles.author',
                 'book_titles.category',
+                'book_titles.publisher',
+                'book_titles.image_path',
                 DB::raw('COUNT(transactions.id) as borrow_count')
             )
-            ->groupBy('book_titles.id', 'book_titles.title', 'book_titles.author', 'book_titles.category');
+            ->groupBy('book_titles.id', 'book_titles.title', 'book_titles.author', 'book_titles.category', 'book_titles.publisher', 'book_titles.image_path');
 
         // Apply date filters
         if ($request->has('start_date')) {

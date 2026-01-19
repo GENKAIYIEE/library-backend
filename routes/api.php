@@ -19,6 +19,7 @@ Route::get('/books/search/{keyword}', [BookController::class, 'search']);
 Route::get('/books/available', [BookController::class, 'getAvailableBooks']);
 Route::get('/books/borrowed', [BookController::class, 'getBorrowedBooks']);
 Route::get('/books/lookup/{barcode}', [BookController::class, 'lookup']);
+Route::get('/books/lookup-isbn/{isbn}', [BookController::class, 'lookupIsbn']);
 Route::get('/students/{studentId}/clearance', [BookController::class, 'checkClearance']);
 
 // Public (Kiosk) Routes
@@ -44,6 +45,8 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     // Book Management
     Route::post('/books/title', [BookController::class, 'storeTitle']);
     Route::post('/books/asset', [BookController::class, 'storeAsset']);
+    Route::get('/books/next-accession', [BookController::class, 'getNextAccession']);
+    Route::get('/books/random-barcode', [BookController::class, 'generateRandomBarcode']);
 
     // Circulation (The New Stuff)
     Route::post('/borrow', [TransactionController::class, 'borrow']);

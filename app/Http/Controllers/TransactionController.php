@@ -80,7 +80,7 @@ class TransactionController extends Controller
             'book_asset_id' => $bookAsset->id,
             'borrowed_at' => Carbon::now(),
             'due_date' => $dueDate,
-            'processed_by' => $request->user()->id
+            'processed_by' => $request->user()?->id
         ]);
 
         // 8. Update Book Status

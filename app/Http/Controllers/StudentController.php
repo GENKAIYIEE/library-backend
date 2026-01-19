@@ -66,7 +66,7 @@ class StudentController extends Controller
             'year_level' => $request->year_level,
             'section' => $request->section,
             'email' => $request->email ?? $studentId . '@pclu.edu',
-            'password' => Hash::make('password'),
+            'password' => Hash::make('student123'),
             'role' => 'student'
         ]);
 
@@ -138,7 +138,7 @@ class StudentController extends Controller
                     'year_level' => $request->year_level,
                     'section' => $request->section,
                     'email' => $studentId . '@pclu.edu',
-                    'password' => Hash::make('password'),
+                    'password' => Hash::make('student123'),
                     'role' => 'student'
                 ]);
 

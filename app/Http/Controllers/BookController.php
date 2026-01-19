@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\BookTitle;
 use App\Models\BookAsset;
+use App\Services\GoogleBooksService;
 
 class BookController extends Controller
 {
@@ -27,6 +28,27 @@ class BookController extends Controller
             ->orWhere('category', 'like', "%$keyword%")
             ->with('assets') // Include the physical copies in results
             ->get();
+    }
+
+    /**
+     * Lookup book information by ISBN using Google Books API
+     * 
+     * @param string $isbn The ISBN to lookup
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function lookupIsbn($isbn)
+    {
+        $googleBooks = new GoogleBooksService();
+        $bookData = $googleBooks->lookupByIsbn($isbn);
+
+        if (!$bookData) {
+            return response()->json([
+                'found' => false,
+                'message' => 'No book found for ISBN: ' . $isbn
+            ], 404);
+        }
+
+        return response()->json($bookData);
     }
 
     /**
@@ -55,17 +77,162 @@ class BookController extends Controller
         return $prefix . str_pad($nextSequence, 4, '0', STR_PAD_LEFT);
     }
 
+    /**
+     * Generate the next accession number for book titles.
+     * Format: LIB-YYYY-XXXX (e.g., LIB-2026-0001)
+     * 
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getNextAccession()
+    {
+        $year = date('Y');
+        $prefix = 'LIB-' . $year . '-';
+
+        // Find the latest accession number for the current year from book_assets
+        $latestAsset = BookAsset::where('asset_code', 'like', 'LIB-' . $year . '-%')
+            ->orderBy('asset_code', 'desc')
+            ->first();
+
+        // Also check BOOK- prefix for backwards compatibility
+        $latestBookAsset = BookAsset::where('asset_code', 'like', 'BOOK-' . $year . '-%')
+            ->orderBy('asset_code', 'desc')
+            ->first();
+
+        $nextSequence = 1;
+
+        if ($latestAsset) {
+            $lastSequence = (int) substr($latestAsset->asset_code, strlen($prefix));
+            $nextSequence = max($nextSequence, $lastSequence + 1);
+        }
+
+        if ($latestBookAsset) {
+            $bookPrefix = 'BOOK-' . $year . '-';
+            $lastBookSequence = (int) substr($latestBookAsset->asset_code, strlen($bookPrefix));
+            $nextSequence = max($nextSequence, $lastBookSequence + 1);
+        }
+
+        // Format with leading zeros (4 digits)
+        $accessionNumber = $prefix . str_pad($nextSequence, 4, '0', STR_PAD_LEFT);
+
+        return response()->json([
+            'accession_number' => $accessionNumber,
+            'sequence' => $nextSequence,
+            'year' => $year
+        ]);
+    }
+
+    /**
+     * Generate a random 12-digit barcode number.
+     * 
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function generateRandomBarcode()
+    {
+        // Generate a unique 12-digit number
+        $barcode = str_pad(mt_rand(0, 999999999999), 12, '0', STR_PAD_LEFT);
+
+        // Verify uniqueness
+        while (BookAsset::where('asset_code', $barcode)->exists()) {
+            $barcode = str_pad(mt_rand(0, 999999999999), 12, '0', STR_PAD_LEFT);
+        }
+
+        return response()->json([
+            'barcode' => $barcode
+        ]);
+    }
+
     // 3. CREATE NEW BOOK TITLE (Admin Only)
     public function storeTitle(Request $request)
     {
         $fields = $request->validate([
-            'title' => 'required|string',
-            'author' => 'required|string',
-            'category' => 'required|string',
-            'isbn' => 'nullable|string'
+            'title' => 'required|string|max:255',
+            'author' => 'required|string|max:255',
+            'category' => 'required|string|max:100',
+            'isbn' => 'nullable|string|max:50',
+            'publisher' => 'nullable|string|max:255',
+            'published_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
+            'call_number' => 'nullable|string|max:100',
+            'pages' => 'nullable|integer|min:1',
+            'language' => 'nullable|string|max:50',
+            'description' => 'nullable|string',
+            'location' => 'nullable|string|max:255',
+            'copies' => 'nullable|integer|min:1|max:100',
+            'accession_number' => 'nullable|string|max:50',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120' // 5MB max
         ]);
 
-        return BookTitle::create($fields);
+        // Handle image upload
+        $imagePath = null;
+        if ($request->hasFile('image')) {
+            $image = $request->file('image');
+            $filename = time() . '_' . uniqid() . '.' . $image->getClientOriginalExtension();
+
+            // Ensure directory exists
+            $uploadPath = public_path('uploads/books');
+            if (!file_exists($uploadPath)) {
+                mkdir($uploadPath, 0755, true);
+            }
+
+            $image->move($uploadPath, $filename);
+            $imagePath = 'uploads/books/' . $filename;
+        }
+
+        // Create the book title
+        $bookTitle = BookTitle::create([
+            'title' => $fields['title'],
+            'author' => $fields['author'],
+            'category' => $fields['category'],
+            'isbn' => $fields['isbn'] ?? null,
+            'publisher' => $fields['publisher'] ?? null,
+            'published_year' => $fields['published_year'] ?? null,
+            'call_number' => $fields['call_number'] ?? null,
+            'pages' => $fields['pages'] ?? null,
+            'language' => $fields['language'] ?? null,
+            'description' => $fields['description'] ?? null,
+            'location' => $fields['location'] ?? null,
+            'image_path' => $imagePath
+        ]);
+
+        // Auto-generate physical copies (BookAsset records)
+        $copies = isset($fields['copies']) ? (int) $fields['copies'] : 0;
+        $createdAssets = [];
+
+        // Get the base accession number from request or generate one
+        $baseAccession = $request->input('accession_number');
+
+        for ($i = 0; $i < $copies; $i++) {
+            if ($i === 0 && $baseAccession && !BookAsset::where('asset_code', $baseAccession)->exists()) {
+                // Use the provided accession number for the first copy
+                $assetCode = $baseAccession;
+            } else {
+                // Generate sequential asset code for additional copies
+                $assetCode = $this->generateAssetBarcode();
+            }
+
+            // Ensure uniqueness
+            while (BookAsset::where('asset_code', $assetCode)->exists()) {
+                $assetCode = $this->generateAssetBarcode();
+            }
+
+            $asset = BookAsset::create([
+                'book_title_id' => $bookTitle->id,
+                'asset_code' => $assetCode,
+                'building' => null, // Default location from book title
+                'aisle' => null,
+                'shelf' => null,
+                'status' => 'available'
+            ]);
+            $createdAssets[] = $asset;
+        }
+
+        // Load the assets relationship for response
+        $bookTitle->load('assets');
+
+        return response()->json([
+            'message' => 'Book created successfully',
+            'book' => $bookTitle,
+            'copies_created' => count($createdAssets)
+        ], 201);
     }
 
     // 4. ADD PHYSICAL COPY TO SHELF (Admin Only)
@@ -73,14 +240,15 @@ class BookController extends Controller
     {
         $fields = $request->validate([
             'book_title_id' => 'required|exists:book_titles,id',
-            'building' => 'required|string',
-            'aisle' => 'required|string',
-            'shelf' => 'required|string'
+            'building' => 'nullable|string',
+            'aisle' => 'nullable|string',
+            'shelf' => 'nullable|string'
         ]);
 
         // Auto-generate the asset barcode
         $assetCode = $this->generateAssetBarcode();
         $fields['asset_code'] = $assetCode;
+        $fields['status'] = 'available';
 
         return BookAsset::create($fields);
     }
@@ -108,13 +276,45 @@ class BookController extends Controller
         if (!$book)
             return response()->json(['message' => 'Not found'], 404);
 
-        $request->validate([
-            'title' => 'required',
-            'author' => 'required',
-            'category' => 'required'
+        $fields = $request->validate([
+            'title' => 'required|string|max:255',
+            'author' => 'required|string|max:255',
+            'category' => 'required|string|max:100',
+            'isbn' => 'nullable|string|max:50',
+            'publisher' => 'nullable|string|max:255',
+            'published_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
+            'call_number' => 'nullable|string|max:100',
+            'pages' => 'nullable|integer|min:1',
+            'language' => 'nullable|string|max:50',
+            'description' => 'nullable|string',
+            'location' => 'nullable|string|max:255',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120'
         ]);
 
-        $book->update($request->all());
+        // Handle image upload
+        if ($request->hasFile('image')) {
+            $image = $request->file('image');
+            $filename = time() . '_' . uniqid() . '.' . $image->getClientOriginalExtension();
+
+            // Ensure directory exists
+            $uploadPath = public_path('uploads/books');
+            if (!file_exists($uploadPath)) {
+                mkdir($uploadPath, 0755, true);
+            }
+
+            // Delete old image if exists
+            if ($book->image_path && file_exists(public_path($book->image_path))) {
+                unlink(public_path($book->image_path));
+            }
+
+            $image->move($uploadPath, $filename);
+            $fields['image_path'] = 'uploads/books/' . $filename;
+        }
+
+        // Remove 'image' from fields as it's handled separately
+        unset($fields['image']);
+
+        $book->update($fields);
         return response()->json($book);
     }
 
@@ -169,7 +369,9 @@ class BookController extends Controller
                     'title' => $book->title,
                     'author' => $book->author,
                     'category' => $book->category,
-                    'cover_image' => $book->cover_image, // Make sure this is the full URL or relative path handled by frontend
+                    'publisher' => $book->publisher,
+                    'image_path' => $book->image_path,
+                    'cover_image' => $book->cover_image, // Legacy support
                     'available_copies' => $book->available_copies
                 ];
             });
@@ -291,15 +493,25 @@ class BookController extends Controller
             ->first();
 
         if ($bookAsset) {
+            $bookTitle = $bookAsset->bookTitle;
+
             // Found by asset_code - return full asset details
             $response = [
                 'found' => true,
                 'asset_code' => $bookAsset->asset_code,
                 'status' => $bookAsset->status,
-                'title' => $bookAsset->bookTitle->title ?? 'Unknown',
-                'author' => $bookAsset->bookTitle->author ?? 'Unknown',
-                'category' => $bookAsset->bookTitle->category ?? 'Unknown',
-                'location' => $bookAsset->building . ' - ' . $bookAsset->aisle . ' - ' . $bookAsset->shelf,
+                'title' => $bookTitle->title ?? 'Unknown',
+                'author' => $bookTitle->author ?? 'Unknown',
+                'category' => $bookTitle->category ?? 'Unknown',
+                'publisher' => $bookTitle->publisher ?? null,
+                'published_year' => $bookTitle->published_year ?? null,
+                'call_number' => $bookTitle->call_number ?? null,
+                'pages' => $bookTitle->pages ?? null,
+                'language' => $bookTitle->language ?? null,
+                'description' => $bookTitle->description ?? null,
+                'image_path' => $bookTitle->image_path ?? null,
+                'isbn' => $bookTitle->isbn ?? null,
+                'location' => trim($bookAsset->building . ' - ' . $bookAsset->aisle . ' - ' . $bookAsset->shelf, ' -') ?: ($bookTitle->location ?? 'N/A'),
                 'borrower' => null,
                 'due_date' => null,
                 'is_overdue' => false
@@ -344,7 +556,15 @@ class BookController extends Controller
                     'title' => $bookTitle->title,
                     'author' => $bookTitle->author,
                     'category' => $bookTitle->category,
-                    'location' => $availableAsset->building . ' - ' . $availableAsset->aisle . ' - ' . $availableAsset->shelf,
+                    'publisher' => $bookTitle->publisher,
+                    'published_year' => $bookTitle->published_year,
+                    'call_number' => $bookTitle->call_number,
+                    'pages' => $bookTitle->pages,
+                    'language' => $bookTitle->language,
+                    'description' => $bookTitle->description,
+                    'image_path' => $bookTitle->image_path,
+                    'isbn' => $bookTitle->isbn,
+                    'location' => trim($availableAsset->building . ' - ' . $availableAsset->aisle . ' - ' . $availableAsset->shelf, ' -') ?: ($bookTitle->location ?? 'N/A'),
                     'borrower' => null,
                     'due_date' => null,
                     'is_overdue' => false
@@ -360,8 +580,15 @@ class BookController extends Controller
                 'title' => $bookTitle->title,
                 'author' => $bookTitle->author,
                 'category' => $bookTitle->category,
+                'publisher' => $bookTitle->publisher,
+                'published_year' => $bookTitle->published_year,
+                'call_number' => $bookTitle->call_number,
+                'pages' => $bookTitle->pages,
+                'language' => $bookTitle->language,
+                'description' => $bookTitle->description,
+                'image_path' => $bookTitle->image_path,
                 'isbn' => $bookTitle->isbn,
-                'location' => 'N/A - No physical copies registered',
+                'location' => $bookTitle->location ?? 'N/A - No physical copies registered',
                 'borrower' => null,
                 'due_date' => null,
                 'is_overdue' => false,

@@ -15,7 +15,14 @@ class BookTitle extends Model
         'author',
         'isbn',
         'category',
+        'publisher',
+        'published_year',
+        'call_number',
+        'pages',
+        'language',
         'description',
+        'location',
+        'image_path',
         'cover_image'
     ];
 

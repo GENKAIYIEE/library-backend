@@ -177,12 +177,20 @@ class BookController extends Controller
             $imagePath = 'uploads/books/' . $filename;
         }
 
+        // Auto-generate ISBN if not provided
+        $isbn = $fields['isbn'] ?? null;
+        if (empty($isbn)) {
+            do {
+                $isbn = (string) mt_rand(1000000000000, 9999999999999);
+            } while (BookTitle::where('isbn', $isbn)->exists());
+        }
+
         // Create the book title
         $bookTitle = BookTitle::create([
             'title' => $fields['title'],
             'author' => $fields['author'],
             'category' => $fields['category'],
-            'isbn' => $fields['isbn'] ?? null,
+            'isbn' => $isbn,
             'publisher' => $fields['publisher'] ?? null,
             'published_year' => $fields['published_year'] ?? null,
             'call_number' => $fields['call_number'] ?? null,
@@ -569,6 +577,52 @@ class BookController extends Controller
                     'due_date' => null,
                     'is_overdue' => false
                 ]);
+            }
+
+            // Check for borrowed copies (important for Return Scanner!)
+            $borrowedAsset = BookAsset::where('book_title_id', $bookTitle->id)
+                ->where('status', 'borrowed')
+                ->first();
+
+            if ($borrowedAsset) {
+                // Has a borrowed copy - return that asset with borrower info
+                $transaction = \App\Models\Transaction::where('book_asset_id', $borrowedAsset->id)
+                    ->whereNull('returned_at')
+                    ->with('user:id,name,student_id,course')
+                    ->first();
+
+                $response = [
+                    'found' => true,
+                    'asset_code' => $borrowedAsset->asset_code,
+                    'status' => 'borrowed',
+                    'title' => $bookTitle->title,
+                    'author' => $bookTitle->author,
+                    'category' => $bookTitle->category,
+                    'publisher' => $bookTitle->publisher,
+                    'published_year' => $bookTitle->published_year,
+                    'call_number' => $bookTitle->call_number,
+                    'pages' => $bookTitle->pages,
+                    'language' => $bookTitle->language,
+                    'description' => $bookTitle->description,
+                    'image_path' => $bookTitle->image_path,
+                    'isbn' => $bookTitle->isbn,
+                    'location' => trim($borrowedAsset->building . ' - ' . $borrowedAsset->aisle . ' - ' . $borrowedAsset->shelf, ' -') ?: ($bookTitle->location ?? 'N/A'),
+                    'borrower' => null,
+                    'due_date' => null,
+                    'is_overdue' => false
+                ];
+
+                if ($transaction) {
+                    $response['borrower'] = [
+                        'name' => $transaction->user->name,
+                        'student_id' => $transaction->user->student_id,
+                        'course' => $transaction->user->course
+                    ];
+                    $response['due_date'] = $transaction->due_date;
+                    $response['is_overdue'] = now()->gt($transaction->due_date);
+                }
+
+                return response()->json($response);
             }
 
             // Book title exists but no physical copies yet

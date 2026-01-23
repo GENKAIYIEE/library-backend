@@ -53,7 +53,8 @@ class StudentController extends Controller
             'course' => 'required|string',
             'year_level' => 'required|integer',
             'section' => 'required|string',
-            'email' => 'nullable|email'
+            'email' => 'nullable|email',
+            'phone_number' => 'nullable|string|max:20'
         ]);
 
         // Auto-generate the student ID
@@ -66,6 +67,7 @@ class StudentController extends Controller
             'year_level' => $request->year_level,
             'section' => $request->section,
             'email' => $request->email ?? $studentId . '@pclu.edu',
+            'phone_number' => $request->phone_number,
             'password' => Hash::make('student123'),
             'role' => 'student'
         ]);
@@ -87,6 +89,8 @@ class StudentController extends Controller
             'course' => 'required|string',
             'year_level' => 'required|integer',
             'section' => 'required|string',
+            'email' => 'nullable|email',
+            'phone_number' => 'nullable|string|max:20',
         ]);
 
         $user->update([
@@ -94,6 +98,8 @@ class StudentController extends Controller
             'course' => $request->course,
             'year_level' => $request->year_level,
             'section' => $request->section,
+            'email' => $request->email ?? $user->email,
+            'phone_number' => $request->phone_number,
         ]);
 
         return response()->json($user);

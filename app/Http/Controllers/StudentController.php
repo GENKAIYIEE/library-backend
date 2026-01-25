@@ -50,24 +50,61 @@ class StudentController extends Controller
     {
         $request->validate([
             'name' => 'required|string',
-            'course' => 'required|string',
-            'year_level' => 'required|integer',
-            'section' => 'required|string',
+            'course' => 'nullable|string',
+            'year_level' => 'nullable|integer',
+            'section' => 'nullable|string',
             'email' => 'nullable|email',
-            'phone_number' => 'nullable|string|max:20'
+            'phone_number' => 'nullable|string|max:20',
+            'profile_picture' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048'
         ]);
 
-        // Auto-generate the student ID
-        $studentId = $this->generateStudentId();
+        // Auto-generate the student ID if not provided, or use provided one
+        $studentId = $request->student_id ?? $this->generateStudentId();
 
+        // Handle File Upload
+        $profilePicturePath = null;
+        if ($request->hasFile('profile_picture')) {
+            $profilePicturePath = $request->file('profile_picture')->store('profile_pictures', 'public');
+        }
+
+        // CHECK for existing student (including soft deleted)
+        $existingUser = User::withTrashed()->where('student_id', $studentId)->first();
+
+        if ($existingUser) {
+            // Restore if deleted
+            if ($existingUser->trashed()) {
+                $existingUser->restore();
+            }
+
+            // Update details
+            $data = [
+                'name' => $request->name,
+                'course' => $request->course ?? $existingUser->course ?? 'N/A',
+                'year_level' => $request->year_level ?? $existingUser->year_level ?? 1,
+                'section' => $request->section ?? $existingUser->section ?? 'N/A',
+                'email' => $request->email ?? $existingUser->email,
+                'phone_number' => $request->phone_number ?? $existingUser->phone_number,
+            ];
+
+            if ($profilePicturePath) {
+                $data['profile_picture'] = $profilePicturePath;
+            }
+
+            $existingUser->update($data);
+
+            return response()->json($existingUser);
+        }
+
+        // Create new if not exists
         $user = User::create([
             'name' => $request->name,
             'student_id' => $studentId,
-            'course' => $request->course,
-            'year_level' => $request->year_level,
-            'section' => $request->section,
+            'course' => $request->course ?? 'N/A',
+            'year_level' => $request->year_level ?? 1,
+            'section' => $request->section ?? 'N/A',
             'email' => $request->email ?? $studentId . '@pclu.edu',
             'phone_number' => $request->phone_number,
+            'profile_picture' => $profilePicturePath,
             'password' => Hash::make('student123'),
             'role' => 'student'
         ]);
@@ -91,16 +128,23 @@ class StudentController extends Controller
             'section' => 'required|string',
             'email' => 'nullable|email',
             'phone_number' => 'nullable|string|max:20',
+            'profile_picture' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048'
         ]);
 
-        $user->update([
+        $data = [
             'name' => $request->name,
             'course' => $request->course,
             'year_level' => $request->year_level,
             'section' => $request->section,
             'email' => $request->email ?? $user->email,
             'phone_number' => $request->phone_number,
-        ]);
+        ];
+
+        if ($request->hasFile('profile_picture')) {
+            $data['profile_picture'] = $request->file('profile_picture')->store('profile_pictures', 'public');
+        }
+
+        $user->update($data);
 
         return response()->json($user);
     }
@@ -228,6 +272,42 @@ class StudentController extends Controller
             'badges' => $badges,
             'unlocked_count' => count(array_filter($badges, fn($b) => $b['unlocked'])),
             'total_count' => count($badges)
+        ]);
+    }
+
+    // 7. GET STUDENT HISTORY
+    public function history($id)
+    {
+        $student = User::find($id);
+
+        if (!$student || $student->role !== 'student') {
+            return response()->json(['message' => 'Student not found'], 404);
+        }
+
+        // Get Transactions
+        $transactions = Transaction::where('user_id', $id)
+            ->join('book_assets', 'transactions.book_asset_id', '=', 'book_assets.id')
+            ->join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
+            ->select(
+                'transactions.*',
+                'book_titles.title as book_title',
+                'book_assets.asset_code'
+            )
+            ->orderBy('transactions.created_at', 'desc')
+            ->get();
+
+        // Calculate Stats
+        $stats = [
+            'totalBorrowed' => $transactions->count(),
+            'currentLoans' => $transactions->whereNull('returned_at')->count(),
+            'overdueCount' => $transactions->whereNull('returned_at')->where('due_date', '<', now())->count(),
+            'totalFines' => $transactions->sum('penalty_amount'),
+            'pendingFines' => $transactions->where('payment_status', 'pending')->sum('penalty_amount')
+        ];
+
+        return response()->json([
+            'transactions' => $transactions,
+            'stats' => $stats
         ]);
     }
 

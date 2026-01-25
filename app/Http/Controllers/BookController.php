@@ -395,7 +395,7 @@ class BookController extends Controller
 
         $availableBooks = BookAsset::where('status', 'available')
             ->whereHas('bookTitle') // Only include assets with non-deleted book titles
-            ->with('bookTitle:id,title,author,category')
+            ->with('bookTitle:id,title,author,category,image_path')
             ->orderBy('asset_code')
             ->get()
             ->map(function ($asset) use ($relevantCategories) {
@@ -411,8 +411,10 @@ class BookController extends Controller
 
                 return [
                     'asset_code' => $asset->asset_code,
+                    'status' => $asset->status, // Added status field
                     'title' => $asset->bookTitle->title ?? 'Unknown',
                     'author' => $asset->bookTitle->author ?? 'Unknown',
+                    'image_path' => $asset->bookTitle->image_path ?? null,
                     'category' => $category,
                     'location' => $asset->building . ' - ' . $asset->aisle . ' - ' . $asset->shelf,
                     'is_recommended' => $isRelevant
@@ -429,7 +431,7 @@ class BookController extends Controller
     {
         $borrowedBooks = BookAsset::where('status', 'borrowed')
             ->whereHas('bookTitle') // Only include assets with non-deleted book titles
-            ->with(['bookTitle:id,title,author'])
+            ->with(['bookTitle:id,title,author,image_path'])
             ->orderBy('asset_code')
             ->get()
             ->map(function ($asset) {
@@ -441,8 +443,10 @@ class BookController extends Controller
 
                 return [
                     'asset_code' => $asset->asset_code,
+                    'status' => $asset->status, // Added status field
                     'title' => $asset->bookTitle->title ?? 'Unknown',
                     'author' => $asset->bookTitle->author ?? 'Unknown',
+                    'image_path' => $asset->bookTitle->image_path ?? null,
                     'borrower' => $transaction->user->name ?? 'Unknown',
                     'student_id' => $transaction->user->student_id ?? 'N/A',
                     'due_date' => $transaction->due_date ?? null,

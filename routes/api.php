@@ -63,6 +63,7 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::put('/students/{id}', [App\Http\Controllers\StudentController::class, 'update']);
     Route::delete('/students/{id}', [App\Http\Controllers\StudentController::class, 'destroy']);
     Route::post('/students/batch', [App\Http\Controllers\StudentController::class, 'batchStore']);
+    Route::get('/students/{id}/history', [App\Http\Controllers\StudentController::class, 'history']);
 
     // Gamification: Leaderboard & Achievements
     Route::get('/students/leaderboard', [App\Http\Controllers\StudentController::class, 'leaderboard']);

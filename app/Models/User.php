@@ -28,6 +28,7 @@ class User extends Authenticatable
         'course',
         'year_level',
         'section',
+        'profile_picture', // Added
     ];
 
     /**
@@ -39,11 +40,30 @@ class User extends Authenticatable
     ];
 
     /**
+     * The accessors to append to the model's array form.
+     */
+    protected $appends = ['profile_picture_url'];
+
+    /**
      * The attributes that should be cast to native types.
      */
     protected $casts = [
         'email_verified_at' => 'datetime',
     ];
+
+    /**
+     * Get the profile picture URL.
+     */
+    public function getProfilePictureUrlAttribute()
+    {
+        if ($this->profile_picture) {
+            if (filter_var($this->profile_picture, FILTER_VALIDATE_URL)) {
+                return $this->profile_picture;
+            }
+            return asset('storage/' . $this->profile_picture);
+        }
+        return null; // Frontend handles fallback
+    }
 
     /**
      * Relationship: User has many Transactions (borrow history)

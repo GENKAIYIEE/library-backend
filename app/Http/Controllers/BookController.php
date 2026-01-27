@@ -6,6 +6,8 @@ use Illuminate\Http\Request;
 use App\Models\BookTitle;
 use App\Models\BookAsset;
 use App\Services\GoogleBooksService;
+use App\Http\Requests\StoreBookTitleRequest;
+use App\Http\Requests\UpdateBookTitleRequest;
 
 class BookController extends Controller
 {
@@ -142,24 +144,9 @@ class BookController extends Controller
     }
 
     // 3. CREATE NEW BOOK TITLE (Admin Only)
-    public function storeTitle(Request $request)
+    public function storeTitle(StoreBookTitleRequest $request)
     {
-        $fields = $request->validate([
-            'title' => 'required|string|max:255',
-            'author' => 'required|string|max:255',
-            'category' => 'required|string|max:100',
-            'isbn' => 'nullable|string|max:50',
-            'publisher' => 'nullable|string|max:255',
-            'published_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
-            'call_number' => 'nullable|string|max:100',
-            'pages' => 'nullable|integer|min:1',
-            'language' => 'nullable|string|max:50',
-            'description' => 'nullable|string',
-            'location' => 'nullable|string|max:255',
-            'copies' => 'nullable|integer|min:1|max:100',
-            'accession_number' => 'nullable|string|max:50',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120' // 5MB max
-        ]);
+        $fields = $request->validated();
 
         // Handle image upload
         $imagePath = null;
@@ -191,10 +178,21 @@ class BookController extends Controller
             'author' => $fields['author'],
             'category' => $fields['category'],
             'isbn' => $isbn,
+            'accession_no' => $fields['accession_no'] ?? null,
+            'lccn' => $fields['lccn'] ?? null,
+            'issn' => $fields['issn'] ?? null,
             'publisher' => $fields['publisher'] ?? null,
+            'place_of_publication' => $fields['place_of_publication'] ?? null,
             'published_year' => $fields['published_year'] ?? null,
+            'copyright_year' => $fields['copyright_year'] ?? null,
             'call_number' => $fields['call_number'] ?? null,
             'pages' => $fields['pages'] ?? null,
+            'physical_description' => $fields['physical_description'] ?? null,
+            'edition' => $fields['edition'] ?? null,
+            'series' => $fields['series'] ?? null,
+            'volume' => $fields['volume'] ?? null,
+            'price' => $fields['price'] ?? null,
+            'book_penalty' => $fields['book_penalty'] ?? null,
             'language' => $fields['language'] ?? null,
             'description' => $fields['description'] ?? null,
             'location' => $fields['location'] ?? null,
@@ -278,26 +276,13 @@ class BookController extends Controller
         ]);
     }
     // UPDATE an existing book
-    public function update(Request $request, $id)
+    public function update(UpdateBookTitleRequest $request, $id)
     {
         $book = BookTitle::find($id);
         if (!$book)
             return response()->json(['message' => 'Not found'], 404);
 
-        $fields = $request->validate([
-            'title' => 'required|string|max:255',
-            'author' => 'required|string|max:255',
-            'category' => 'required|string|max:100',
-            'isbn' => 'nullable|string|max:50',
-            'publisher' => 'nullable|string|max:255',
-            'published_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
-            'call_number' => 'nullable|string|max:100',
-            'pages' => 'nullable|integer|min:1',
-            'language' => 'nullable|string|max:50',
-            'description' => 'nullable|string',
-            'location' => 'nullable|string|max:255',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120'
-        ]);
+        $fields = $request->validated();
 
         // Handle image upload
         if ($request->hasFile('image')) {
@@ -340,6 +325,12 @@ class BookController extends Controller
     // Course to Category Mapping for prioritization
     private function getCategoryForCourse($course)
     {
+        // Since Category is now "Resource Type" (Book, Map, etc.) instead of Subject,
+        // we cannot recommend books based on Course -> Subject mapping anymore.
+        // Returning empty array effectively disables the "Recommended" badge logic.
+        return [];
+
+        /* Old Subject Mapping (Disabled)
         $mapping = [
             'BSIT' => ['Information Technology', 'Computer Science', 'Programming', 'Technology'],
             'BSED' => ['Education', 'Teaching', 'Pedagogy', 'Child Development'],
@@ -350,8 +341,8 @@ class BookController extends Controller
             'BSBA' => ['Business', 'Accounting', 'Management', 'Finance'],
             'BS Tourism' => ['Tourism', 'Hospitality', 'Travel', 'Culture']
         ];
-
         return $mapping[$course] ?? [];
+        */
     }
 
     // NEW: Get books for Dashboard Grid (recent available ones)
@@ -474,8 +465,9 @@ class BookController extends Controller
             ->whereNull('returned_at')
             ->count();
 
-        $loanDays = $this->getCategoryForCourse($student->course) ?
-            ($student->course === 'Maritime' ? 1 : 7) : 7;
+        // Fix: Direct check for Maritime course since getCategoryForCourse is deprecated
+        // Maritime students get 1 day loan, others get 7 days
+        $loanDays = ($student->course === 'Maritime') ? 1 : 7;
 
         return response()->json([
             'student_id' => $student->student_id,
@@ -485,7 +477,7 @@ class BookController extends Controller
             'section' => $student->section,
             'pending_fines' => $pendingFines,
             'active_loans' => $activeLoans,
-            'loan_days' => $student->course === 'Maritime' ? 1 : 7,
+            'loan_days' => $loanDays,
             'is_cleared' => $pendingFines == 0 && $activeLoans < 3,
             'block_reason' => $pendingFines > 0 ? 'Pending fines: ₱' . number_format($pendingFines, 2) :
                 ($activeLoans >= 3 ? 'Max 3 books reached' : null)

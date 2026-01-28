@@ -28,7 +28,11 @@ Route::prefix('public')->group(function () {
     Route::get('/books', [App\Http\Controllers\PublicBookController::class, 'index']);
     Route::get('/books/categories', [App\Http\Controllers\PublicBookController::class, 'categories']); // New route
     Route::get('/books/{id}', [App\Http\Controllers\PublicBookController::class, 'show']);
+<<<<<<< HEAD
     Route::post('/attendance', [AttendanceController::class, 'storePublic']);
+=======
+    Route::post('/attendance', [App\Http\Controllers\AttendanceController::class, 'logAttendance']);
+>>>>>>> 4bbd6a008574794d40f208964421a8f7e8115d9e
 });
 
 /*
@@ -101,4 +105,8 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/users', [UserController::class, 'index']);
     Route::post('/users', [UserController::class, 'store']);
     Route::post('/users/check-unique', [UserController::class, 'checkUnique']);
+
+    // Attendance Logs (Admin)
+    Route::get('/attendance', [App\Http\Controllers\AttendanceController::class, 'index']);
+    Route::get('/attendance/today', [App\Http\Controllers\AttendanceController::class, 'today']);
 });

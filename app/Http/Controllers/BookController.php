@@ -146,7 +146,6 @@ class BookController extends Controller
     // 3. CREATE NEW BOOK TITLE (Admin Only)
     public function storeTitle(StoreBookTitleRequest $request)
     {
-<<<<<<< HEAD
         $fields = $request->validate([
             'title' => 'required|string|max:255',
             'subtitle' => 'nullable|string|max:255',
@@ -174,9 +173,6 @@ class BookController extends Controller
             'accession_no' => 'nullable|string|max:50', // Renamed from accession_number to match table
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120' // 5MB max
         ]);
-=======
-        $fields = $request->validated();
->>>>>>> 4bbd6a008574794d40f208964421a8f7e8115d9e
 
         // Handle image upload
         $imagePath = null;
@@ -209,10 +205,7 @@ class BookController extends Controller
             'author' => $fields['author'],
             'category' => $fields['category'],
             'isbn' => $isbn,
-<<<<<<< HEAD
-=======
-            'accession_no' => $fields['accession_no'] ?? null,
->>>>>>> 4bbd6a008574794d40f208964421a8f7e8115d9e
+
             'lccn' => $fields['lccn'] ?? null,
             'issn' => $fields['issn'] ?? null,
             'publisher' => $fields['publisher'] ?? null,
@@ -222,10 +215,7 @@ class BookController extends Controller
             'call_number' => $fields['call_number'] ?? null,
             'physical_description' => $fields['physical_description'] ?? null,
             'pages' => $fields['pages'] ?? null,
-<<<<<<< HEAD
-=======
-            'physical_description' => $fields['physical_description'] ?? null,
->>>>>>> 4bbd6a008574794d40f208964421a8f7e8115d9e
+
             'edition' => $fields['edition'] ?? null,
             'series' => $fields['series'] ?? null,
             'volume' => $fields['volume'] ?? null,
@@ -321,7 +311,6 @@ class BookController extends Controller
         if (!$book)
             return response()->json(['message' => 'Not found'], 404);
 
-<<<<<<< HEAD
         $fields = $request->validate([
             'title' => 'required|string|max:255',
             'subtitle' => 'nullable|string|max:255',
@@ -348,9 +337,6 @@ class BookController extends Controller
             'accession_no' => 'nullable|string|max:50',
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120'
         ]);
-=======
-        $fields = $request->validated();
->>>>>>> 4bbd6a008574794d40f208964421a8f7e8115d9e
 
         // Handle image upload
         if ($request->hasFile('image')) {

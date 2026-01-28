@@ -12,17 +12,39 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::table('book_titles', function (Blueprint $table) {
-            $table->string('accession_no')->nullable()->after('isbn');
-            $table->string('lccn')->nullable()->after('accession_no');
-            $table->string('issn')->nullable()->after('lccn');
-            $table->decimal('book_penalty', 8, 2)->nullable()->after('language');
-            $table->string('place_of_publication')->nullable()->after('publisher');
-            $table->string('physical_description')->nullable()->after('pages');
-            $table->string('edition')->nullable()->after('physical_description');
-            $table->year('copyright_year')->nullable()->after('published_year');
-            $table->string('series')->nullable()->after('edition');
-            $table->string('volume')->nullable()->after('series');
-            $table->decimal('price', 10, 2)->nullable()->after('volume');
+            if (!Schema::hasColumn('book_titles', 'accession_no')) {
+                $table->string('accession_no')->nullable()->after('isbn');
+            }
+            if (!Schema::hasColumn('book_titles', 'lccn')) {
+                $table->string('lccn')->nullable()->after('accession_no');
+            }
+            if (!Schema::hasColumn('book_titles', 'issn')) {
+                $table->string('issn')->nullable()->after('lccn');
+            }
+            if (!Schema::hasColumn('book_titles', 'book_penalty')) {
+                $table->decimal('book_penalty', 8, 2)->nullable()->after('language');
+            }
+            if (!Schema::hasColumn('book_titles', 'place_of_publication')) {
+                $table->string('place_of_publication')->nullable()->after('publisher');
+            }
+            if (!Schema::hasColumn('book_titles', 'physical_description')) {
+                $table->string('physical_description')->nullable()->after('pages');
+            }
+            if (!Schema::hasColumn('book_titles', 'edition')) {
+                $table->string('edition')->nullable()->after('physical_description');
+            }
+            if (!Schema::hasColumn('book_titles', 'copyright_year')) {
+                $table->year('copyright_year')->nullable()->after('published_year');
+            }
+            if (!Schema::hasColumn('book_titles', 'series')) {
+                $table->string('series')->nullable()->after('edition');
+            }
+            if (!Schema::hasColumn('book_titles', 'volume')) {
+                $table->string('volume')->nullable()->after('series');
+            }
+            if (!Schema::hasColumn('book_titles', 'price')) {
+                $table->decimal('price', 10, 2)->nullable()->after('volume');
+            }
         });
     }
 

@@ -711,4 +711,51 @@ class BookController extends Controller
             'message' => 'Book not found with barcode: ' . $barcode
         ], 404);
     }
+
+    /**
+     * Get all books marked as lost, including their latest transaction state (for payment check).
+     */
+    public function getLostBooks()
+    {
+        $lostAssets = BookAsset::with([
+            'bookTitle',
+            'transactions' => function ($q) {
+                $q->latest()->limit(1); // Get the transaction that marked it lost
+            }
+        ])
+            ->where('status', 'lost')
+            ->get();
+
+        return response()->json($lostAssets);
+    }
+
+    /**
+     * Restore a lost book (mark as available).
+     * Requires the fine to be paid or waived first.
+     */
+    public function restoreBook($id)
+    {
+        $asset = BookAsset::find($id);
+
+        if (!$asset) {
+            return response()->json(['message' => 'Book copy not found'], 404);
+        }
+
+        // Check for unpaid fines associated with this asset
+        $latestTransaction = $asset->transactions()->latest()->first();
+
+        // If there is a transaction with a penalty that hasn't been paid/waived
+        if ($latestTransaction && $latestTransaction->penalty_amount > 0 && $latestTransaction->payment_status === 'pending') {
+            return response()->json([
+                'message' => 'Cannot restore book. The lost book fine must be settled first.',
+                'error' => 'unpaid_fine',
+                'transaction_id' => $latestTransaction->id
+            ], 403);
+        }
+
+        $asset->status = 'available';
+        $asset->save();
+
+        return response()->json(['message' => 'Book restored successfully']);
+    }
 }

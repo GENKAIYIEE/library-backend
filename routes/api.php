@@ -50,15 +50,20 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::post('/books/asset', [BookController::class, 'storeAsset']);
     Route::get('/books/next-accession', [BookController::class, 'getNextAccession']);
     Route::get('/books/random-barcode', [BookController::class, 'generateRandomBarcode']);
+    Route::get('/books/lost', [BookController::class, 'getLostBooks']); // NEW
+    Route::post('/books/assets/{id}/restore', [BookController::class, 'restoreBook']); // NEW
 
     // Circulation (The New Stuff)
     Route::post('/borrow', [TransactionController::class, 'borrow']);
     Route::post('/return', [TransactionController::class, 'returnBook']);
+    Route::post('/transactions/lost', [TransactionController::class, 'markAsLost']); // NEW
     Route::get('/history', [TransactionController::class, 'history']);
 
     // Payment Management (NEW)
     Route::post('/transactions/{id}/pay', [TransactionController::class, 'markAsPaid']);
     Route::post('/transactions/{id}/waive', [TransactionController::class, 'waiveFine']);
+    Route::post('/transactions/{id}/unpaid', [TransactionController::class, 'markAsUnpaid']); // NEW
+    Route::get('/students/{id}/fines', [TransactionController::class, 'getStudentFines']); // NEW
 
     // Student Management
     Route::get('/students', [App\Http\Controllers\StudentController::class, 'index']);

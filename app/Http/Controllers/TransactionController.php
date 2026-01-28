@@ -145,8 +145,69 @@ class TransactionController extends Controller
         return response()->json([
             'message' => 'Book returned successfully',
             'days_late' => $daysLate,
-            'penalty' => $penalty
+            'penalty' => $penalty,
+            'transaction' => $transaction->load('user')
         ]);
+    }
+
+    // NEW: Mark a book as lost
+    public function markAsLost(Request $request)
+    {
+        $request->validate([
+            'asset_code' => 'required|exists:book_assets,asset_code'
+        ]);
+
+        // 1. Find the Book
+        $bookAsset = \App\Models\BookAsset::where('asset_code', $request->asset_code)->first();
+
+        // 2. Find the Active Transaction
+        $transaction = \App\Models\Transaction::where('book_asset_id', $bookAsset->id)
+            ->whereNull('returned_at')
+            ->first();
+
+        if (!$transaction) {
+            return response()->json(['message' => 'This book is not currently borrowed!'], 400);
+        }
+
+        // 3. Calculate Fine (Price of the book)
+        $bookPrice = $bookAsset->bookTitle->price;
+        $penalty = $bookPrice > 0 ? $bookPrice : 500.00; // Default to 500 if no price set
+
+        // 4. Update the Record to "Lost" state (we treat it as returned but with lost flag if we had one, 
+        //    for now we just close the transaction and apply full price penalty)
+        $transaction->update([
+            'returned_at' => Carbon::now(), // Technically "returned" from circulation
+            'penalty_amount' => $penalty,
+            'payment_status' => 'pending'
+        ]);
+
+        // 5. Update Book Status to 'lost'
+        $bookAsset->update(['status' => 'lost']);
+
+        return response()->json([
+            'message' => 'Book marked as lost. Penalty applied.',
+            'penalty' => $penalty,
+            'book_title' => $bookAsset->bookTitle->title,
+            'transaction' => $transaction->load(['user', 'bookAsset.bookTitle'])
+        ]);
+    }
+
+    // NEW: Get all pending fines for a student
+    public function getStudentFines($studentId)
+    {
+        $student = User::where('student_id', $studentId)->first();
+
+        if (!$student) {
+            return response()->json(['message' => 'Student not found'], 404);
+        }
+
+        $fines = Transaction::with(['bookAsset.bookTitle'])
+            ->where('user_id', $student->id)
+            ->where('payment_status', 'pending')
+            ->where('penalty_amount', '>', 0)
+            ->get();
+
+        return response()->json($fines);
     }
 
     // 3. VIEW USER HISTORY
@@ -225,6 +286,28 @@ class TransactionController extends Controller
 
         return response()->json([
             'message' => 'Fine waived successfully',
+            'transaction' => $transaction->load(['user', 'bookAsset.bookTitle'])
+        ]);
+    }
+
+    /**
+     * Revert fine to Unpaid
+     */
+    public function markAsUnpaid($id)
+    {
+        $transaction = Transaction::find($id);
+
+        if (!$transaction) {
+            return response()->json(['message' => 'Transaction not found'], 404);
+        }
+
+        $transaction->update([
+            'payment_status' => 'pending',
+            'payment_date' => null
+        ]);
+
+        return response()->json([
+            'message' => 'Fine marked as unpaid',
             'transaction' => $transaction->load(['user', 'bookAsset.bookTitle'])
         ]);
     }

@@ -146,18 +146,29 @@ class BookController extends Controller
     {
         $fields = $request->validate([
             'title' => 'required|string|max:255',
+            'subtitle' => 'nullable|string|max:255',
             'author' => 'required|string|max:255',
             'category' => 'required|string|max:100',
             'isbn' => 'nullable|string|max:50',
+            'lccn' => 'nullable|string|max:50',
+            'issn' => 'nullable|string|max:50',
             'publisher' => 'nullable|string|max:255',
+            'place_of_publication' => 'nullable|string|max:255',
             'published_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
+            'copyright_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
             'call_number' => 'nullable|string|max:100',
+            'physical_description' => 'nullable|string',
             'pages' => 'nullable|integer|min:1',
+            'edition' => 'nullable|string|max:50',
+            'series' => 'nullable|string|max:255',
+            'volume' => 'nullable|string|max:50',
+            'price' => 'nullable|numeric|min:0',
+            'book_penalty' => 'nullable|numeric|min:0',
             'language' => 'nullable|string|max:50',
             'description' => 'nullable|string',
             'location' => 'nullable|string|max:255',
             'copies' => 'nullable|integer|min:1|max:100',
-            'accession_number' => 'nullable|string|max:50',
+            'accession_no' => 'nullable|string|max:50', // Renamed from accession_number to match table
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120' // 5MB max
         ]);
 
@@ -188,16 +199,28 @@ class BookController extends Controller
         // Create the book title
         $bookTitle = BookTitle::create([
             'title' => $fields['title'],
+            'subtitle' => $fields['subtitle'] ?? null,
             'author' => $fields['author'],
             'category' => $fields['category'],
             'isbn' => $isbn,
+            'lccn' => $fields['lccn'] ?? null,
+            'issn' => $fields['issn'] ?? null,
             'publisher' => $fields['publisher'] ?? null,
+            'place_of_publication' => $fields['place_of_publication'] ?? null,
             'published_year' => $fields['published_year'] ?? null,
+            'copyright_year' => $fields['copyright_year'] ?? null,
             'call_number' => $fields['call_number'] ?? null,
+            'physical_description' => $fields['physical_description'] ?? null,
             'pages' => $fields['pages'] ?? null,
+            'edition' => $fields['edition'] ?? null,
+            'series' => $fields['series'] ?? null,
+            'volume' => $fields['volume'] ?? null,
+            'price' => $fields['price'] ?? null,
+            'book_penalty' => $fields['book_penalty'] ?? null,
             'language' => $fields['language'] ?? null,
             'description' => $fields['description'] ?? null,
             'location' => $fields['location'] ?? null,
+            'accession_no' => $fields['accession_no'] ?? null,
             'image_path' => $imagePath
         ]);
 
@@ -206,7 +229,7 @@ class BookController extends Controller
         $createdAssets = [];
 
         // Get the base accession number from request or generate one
-        $baseAccession = $request->input('accession_number');
+        $baseAccession = $request->input('accession_no');
 
         for ($i = 0; $i < $copies; $i++) {
             if ($i === 0 && $baseAccession && !BookAsset::where('asset_code', $baseAccession)->exists()) {
@@ -286,16 +309,28 @@ class BookController extends Controller
 
         $fields = $request->validate([
             'title' => 'required|string|max:255',
+            'subtitle' => 'nullable|string|max:255',
             'author' => 'required|string|max:255',
             'category' => 'required|string|max:100',
             'isbn' => 'nullable|string|max:50',
+            'lccn' => 'nullable|string|max:50',
+            'issn' => 'nullable|string|max:50',
             'publisher' => 'nullable|string|max:255',
+            'place_of_publication' => 'nullable|string|max:255',
             'published_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
+            'copyright_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
             'call_number' => 'nullable|string|max:100',
+            'physical_description' => 'nullable|string',
             'pages' => 'nullable|integer|min:1',
+            'edition' => 'nullable|string|max:50',
+            'series' => 'nullable|string|max:255',
+            'volume' => 'nullable|string|max:50',
+            'price' => 'nullable|numeric|min:0',
+            'book_penalty' => 'nullable|numeric|min:0',
             'language' => 'nullable|string|max:50',
             'description' => 'nullable|string',
             'location' => 'nullable|string|max:255',
+            'accession_no' => 'nullable|string|max:50',
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120'
         ]);
 
@@ -375,6 +410,7 @@ class BookController extends Controller
                 return [
                     'id' => $book->id,
                     'title' => $book->title,
+                    'subtitle' => $book->subtitle, // Added subtitle
                     'author' => $book->author,
                     'category' => $book->category,
                     'publisher' => $book->publisher,
@@ -413,6 +449,7 @@ class BookController extends Controller
                     'asset_code' => $asset->asset_code,
                     'status' => $asset->status, // Added status field
                     'title' => $asset->bookTitle->title ?? 'Unknown',
+                    'subtitle' => $asset->bookTitle->subtitle ?? null, // Added subtitle
                     'author' => $asset->bookTitle->author ?? 'Unknown',
                     'image_path' => $asset->bookTitle->image_path ?? null,
                     'category' => $category,
@@ -445,6 +482,7 @@ class BookController extends Controller
                     'asset_code' => $asset->asset_code,
                     'status' => $asset->status, // Added status field
                     'title' => $asset->bookTitle->title ?? 'Unknown',
+                    'subtitle' => $asset->bookTitle->subtitle ?? null, // Added subtitle
                     'author' => $asset->bookTitle->author ?? 'Unknown',
                     'image_path' => $asset->bookTitle->image_path ?? null,
                     'borrower' => $transaction->user->name ?? 'Unknown',
@@ -513,6 +551,7 @@ class BookController extends Controller
                 'asset_code' => $bookAsset->asset_code,
                 'status' => $bookAsset->status,
                 'title' => $bookTitle->title ?? 'Unknown',
+                'subtitle' => $bookTitle->subtitle ?? null, // Added subtitle
                 'author' => $bookTitle->author ?? 'Unknown',
                 'category' => $bookTitle->category ?? 'Unknown',
                 'publisher' => $bookTitle->publisher ?? null,

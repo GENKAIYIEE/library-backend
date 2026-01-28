@@ -25,6 +25,7 @@ class PublicBookController extends Controller
         if ($search) {
             $query->where(function ($q) use ($search) {
                 $q->where('title', 'like', "%$search%")
+                    ->orWhere('subtitle', 'like', "%$search%") // Added subtitle search
                     ->orWhere('author', 'like', "%$search%")
                     ->orWhere('category', 'like', "%$search%")
                     ->orWhere('isbn', 'like', "%$search%");
@@ -57,5 +58,19 @@ class PublicBookController extends Controller
             ->findOrFail($id);
 
         return response()->json($book);
+    }
+
+    /**
+     * Get all categories with book counts.
+     */
+    public function categories()
+    {
+        $categories = BookTitle::select('category')
+            ->selectRaw('count(*) as count')
+            ->groupBy('category')
+            ->orderBy('count', 'desc')
+            ->get();
+
+        return response()->json($categories);
     }
 }

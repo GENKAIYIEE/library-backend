@@ -7,6 +7,7 @@ use App\Http\Controllers\BookController;
 use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\AttendanceController;
 
 /*
 |--------------------------------------------------------------------------
@@ -25,7 +26,9 @@ Route::get('/students/{studentId}/clearance', [BookController::class, 'checkClea
 // Public (Kiosk) Routes
 Route::prefix('public')->group(function () {
     Route::get('/books', [App\Http\Controllers\PublicBookController::class, 'index']);
+    Route::get('/books/categories', [App\Http\Controllers\PublicBookController::class, 'categories']); // New route
     Route::get('/books/{id}', [App\Http\Controllers\PublicBookController::class, 'show']);
+    Route::post('/attendance', [AttendanceController::class, 'storePublic']);
 });
 
 /*
@@ -72,6 +75,8 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     // Dashboard Stats
     Route::get('/dashboard/stats', [BookController::class, 'dashboardStats']);
     Route::get('/dashboard/books', [BookController::class, 'getDashboardBooks']);
+    Route::get('/attendance/today', [AttendanceController::class, 'today']);
+    Route::get('/attendance', [AttendanceController::class, 'index']);
     // Analytics
     Route::get('/analytics/trends', [App\Http\Controllers\AnalyticsController::class, 'monthlyTrends']);
     Route::get('/analytics/categories', [App\Http\Controllers\AnalyticsController::class, 'categoryPopularity']);

@@ -46,29 +46,47 @@ class StudentController extends Controller
     }
 
     // 2. REGISTER A NEW STUDENT
+    // 2. REGISTER A NEW STUDENT
     public function store(Request $request)
     {
+        // Basic Validation First
         $request->validate([
-            'name' => 'required|string',
-            'course' => 'nullable|string',
-            'year_level' => 'nullable|integer',
-            'section' => 'nullable|string',
-            'email' => 'nullable|email',
+            'name' => 'required|string|max:255',
+            'course' => 'nullable|string|max:100',
+            'year_level' => 'nullable|integer|min:1|max:6',
+            'section' => 'nullable|string|max:50',
+            'email' => 'nullable|email|max:255', // Unique check handled manually below
             'phone_number' => 'nullable|string|max:20',
+            'student_id' => 'required|string|max:50', // Ensure ID is provided as per frontend
             'profile_picture' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048'
         ]);
 
-        // Auto-generate the student ID if not provided, or use provided one
-        $studentId = $request->student_id ?? $this->generateStudentId();
+        $studentId = $request->student_id;
+        $email = $request->email ?: null; // Convert empty string to null
+
+        // Check if student_id is taken by another user (not soft deleted)
+        // Actually, we want to update if it exists (even soft deleted), right?
+        // But if it exists and is NOT trashed, it's an update.
+        // If it exists and IS trashed, we restore and update.
+
+        $existingUser = User::withTrashed()->where('student_id', $studentId)->first();
+
+        // Check email uniqueness if email is provided
+        if ($email) {
+            $emailQuery = User::where('email', $email);
+            if ($existingUser) {
+                $emailQuery->where('id', '!=', $existingUser->id);
+            }
+            if ($emailQuery->exists()) {
+                return response()->json(['message' => 'The email address is already in use.'], 422);
+            }
+        }
 
         // Handle File Upload
         $profilePicturePath = null;
         if ($request->hasFile('profile_picture')) {
             $profilePicturePath = $request->file('profile_picture')->store('profile_pictures', 'public');
         }
-
-        // CHECK for existing student (including soft deleted)
-        $existingUser = User::withTrashed()->where('student_id', $studentId)->first();
 
         if ($existingUser) {
             // Restore if deleted
@@ -79,10 +97,10 @@ class StudentController extends Controller
             // Update details
             $data = [
                 'name' => $request->name,
-                'course' => $request->course ?? $existingUser->course ?? 'N/A',
-                'year_level' => $request->year_level ?? $existingUser->year_level ?? 1,
-                'section' => $request->section ?? $existingUser->section ?? 'N/A',
-                'email' => $request->email ?? $existingUser->email,
+                'course' => $request->course ?? $existingUser->course,
+                'year_level' => $request->year_level ?? $existingUser->year_level,
+                'section' => $request->section ?? $existingUser->section,
+                'email' => $email ?? $existingUser->email,
                 'phone_number' => $request->phone_number ?? $existingUser->phone_number,
             ];
 
@@ -95,14 +113,14 @@ class StudentController extends Controller
             return response()->json($existingUser);
         }
 
-        // Create new if not exists
+        // Create new user
         $user = User::create([
             'name' => $request->name,
             'student_id' => $studentId,
             'course' => $request->course ?? 'N/A',
             'year_level' => $request->year_level ?? 1,
             'section' => $request->section ?? 'N/A',
-            'email' => $request->email ?? $studentId . '@pclu.edu',
+            'email' => $email ?? $studentId . '@pclu.edu', // Default email if none provided
             'phone_number' => $request->phone_number,
             'profile_picture' => $profilePicturePath,
             'password' => Hash::make('student123'),

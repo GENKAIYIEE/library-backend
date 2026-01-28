@@ -109,18 +109,23 @@ class AttendanceController extends Controller
     }
 
     /**
-     * ADMIN: Get today's attendance logs for real-time display.
+     * ADMIN: Get attendance logs for a specific date (defaults to today).
+     * Supports historical date queries via ?date=YYYY-MM-DD parameter.
      */
     public function today(Request $request)
     {
+        // Accept optional date parameter, default to today
+        $dateInput = $request->input('date', Carbon::today()->toDateString());
+        $parsedDate = Carbon::parse($dateInput);
+
         $logs = AttendanceLog::with([
             'user' => function ($query) {
                 $query->select('id', 'name', 'student_id', 'course', 'year_level', 'profile_picture');
             }
         ])
-            ->whereDate('logged_at', Carbon::today())
+            ->whereDate('logged_at', $parsedDate)
             ->orderBy('logged_at', 'desc')
-            ->limit(100)
+            ->limit(200) // Increased limit for full day history
             ->get();
 
         // Append profile_picture_url to each user
@@ -133,7 +138,8 @@ class AttendanceController extends Controller
         return response()->json([
             'logs' => $logs,
             'count' => $logs->count(),
-            'date' => Carbon::today()->format('F j, Y'),
+            'date' => $parsedDate->format('F j, Y'),
+            'date_iso' => $parsedDate->toDateString(), // For frontend date picker sync
         ]);
     }
 }

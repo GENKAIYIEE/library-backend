@@ -25,7 +25,7 @@ class PublicBookController extends Controller
         if ($search) {
             $query->where(function ($q) use ($search) {
                 $q->where('title', 'like', "%$search%")
-                    ->orWhere('subtitle', 'like', "%$search%") // Added subtitle search
+                    ->orWhere('subtitle', 'like', "%$search%")
                     ->orWhere('author', 'like', "%$search%")
                     ->orWhere('category', 'like', "%$search%")
                     ->orWhere('isbn', 'like', "%$search%");

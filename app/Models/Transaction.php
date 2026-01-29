@@ -18,7 +18,8 @@ class Transaction extends Model
         'processed_by',
         'penalty_amount',
         'payment_status',
-        'payment_date'
+        'payment_date',
+        'remarks'
     ];
 
     // Cast dates properly

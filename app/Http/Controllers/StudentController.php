@@ -302,8 +302,20 @@ class StudentController extends Controller
             return response()->json(['message' => 'Student not found'], 404);
         }
 
-        // Get Transactions
-        $transactions = Transaction::where('user_id', $id)
+        // Base Query
+        $baseQuery = Transaction::where('user_id', $id);
+
+        // Calculate Stats (Global)
+        $stats = [
+            'totalBorrowed' => (clone $baseQuery)->count(),
+            'currentLoans' => (clone $baseQuery)->whereNull('returned_at')->count(),
+            'overdueCount' => (clone $baseQuery)->whereNull('returned_at')->where('due_date', '<', now())->count(),
+            'totalFines' => (clone $baseQuery)->sum('penalty_amount'),
+            'pendingFines' => (clone $baseQuery)->where('payment_status', 'pending')->sum('penalty_amount')
+        ];
+
+        // Get Paginated Transactions
+        $transactions = $baseQuery
             ->join('book_assets', 'transactions.book_asset_id', '=', 'book_assets.id')
             ->join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
             ->select(
@@ -312,16 +324,7 @@ class StudentController extends Controller
                 'book_assets.asset_code'
             )
             ->orderBy('transactions.created_at', 'desc')
-            ->get();
-
-        // Calculate Stats
-        $stats = [
-            'totalBorrowed' => $transactions->count(),
-            'currentLoans' => $transactions->whereNull('returned_at')->count(),
-            'overdueCount' => $transactions->whereNull('returned_at')->where('due_date', '<', now())->count(),
-            'totalFines' => $transactions->sum('penalty_amount'),
-            'pendingFines' => $transactions->where('payment_status', 'pending')->sum('penalty_amount')
-        ];
+            ->paginate(10); // 10 items per page
 
         return response()->json([
             'transactions' => $transactions,

@@ -271,8 +271,12 @@ class TransactionController extends Controller
      * @param int $id - Transaction ID
      * @return \Illuminate\Http\JsonResponse
      */
-    public function waiveFine($id)
+    public function waiveFine(Request $request, $id)
     {
+        $request->validate([
+            'reason' => 'required|string|max:255'
+        ]);
+
         $transaction = Transaction::find($id);
 
         if (!$transaction) {
@@ -281,7 +285,8 @@ class TransactionController extends Controller
 
         $transaction->update([
             'payment_status' => 'waived',
-            'payment_date' => now()
+            'payment_date' => now(),
+            'remarks' => $request->reason
         ]);
 
         return response()->json([

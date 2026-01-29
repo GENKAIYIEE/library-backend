@@ -118,26 +118,51 @@ class AttendanceController extends Controller
         $dateInput = $request->input('date', Carbon::today()->toDateString());
         $parsedDate = Carbon::parse($dateInput);
 
-        $logs = AttendanceLog::with([
+        $query = AttendanceLog::with([
             'user' => function ($query) {
                 $query->select('id', 'name', 'student_id', 'course', 'year_level', 'profile_picture');
             }
         ])
             ->whereDate('logged_at', $parsedDate)
-            ->orderBy('logged_at', 'desc')
-            ->limit(200) // Increased limit for full day history
-            ->get();
+            ->orderBy('logged_at', 'asc');
+
+        // Check if we need all records for reporting
+        if ($request->has('all') && $request->all == 'true') {
+            $logs = $query->get();
+            
+             // Append profile_picture_url to each user
+            $logs->each(function ($log) {
+                if ($log->user) {
+                    $log->user->append('profile_picture_url');
+                }
+            });
+
+            return response()->json([
+                'logs' => $logs,
+                'count' => $logs->count(),
+                'date' => $parsedDate->format('F j, Y'),
+                'date_iso' => $parsedDate->toDateString(),
+            ]);
+        }
+
+        $logs = $query->paginate(10); // Default pagination
 
         // Append profile_picture_url to each user
-        $logs->each(function ($log) {
+        $logs->getCollection()->each(function ($log) {
             if ($log->user) {
                 $log->user->append('profile_picture_url');
             }
         });
 
         return response()->json([
-            'logs' => $logs,
-            'count' => $logs->count(),
+            'logs' => $logs->items(),
+            'pagination' => [
+                'current_page' => $logs->currentPage(),
+                'last_page' => $logs->lastPage(),
+                'per_page' => $logs->perPage(),
+                'total' => $logs->total(),
+            ],
+            'count' => $logs->total(), // Use total count instead of collection count
             'date' => $parsedDate->format('F j, Y'),
             'date_iso' => $parsedDate->toDateString(), // For frontend date picker sync
         ]);

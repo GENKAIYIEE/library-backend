@@ -54,6 +54,12 @@ class ReportController extends Controller
      * @param Request $request - Optional: start_date, end_date
      * @return \Illuminate\Http\JsonResponse
      */
+    /**
+     * Get Top Students (Borrowers) Report
+     * 
+     * @param Request $request - Optional: start_date, end_date
+     * @return \Illuminate\Http\JsonResponse
+     */
     public function topStudents(Request $request)
     {
         $query = Transaction::query()
@@ -63,11 +69,15 @@ class ReportController extends Controller
                 'users.id',
                 'users.name',
                 'users.student_id',
+                'users.course',
+                'users.year_level',
+                'users.section',
+                'users.profile_picture',
                 DB::raw('COUNT(transactions.id) as borrow_count'),
                 DB::raw('SUM(CASE WHEN transactions.returned_at IS NULL THEN 1 ELSE 0 END) as active_loans')
             )
             ->where('users.role', 'student')
-            ->groupBy('users.id', 'users.name', 'users.student_id');
+            ->groupBy('users.id', 'users.name', 'users.student_id', 'users.course', 'users.year_level', 'users.section', 'users.profile_picture');
 
         // Apply date filters
         if ($request->has('start_date')) {
@@ -80,6 +90,40 @@ class ReportController extends Controller
         $results = $query->orderByDesc('borrow_count')->limit(10)->get();
 
         return response()->json($results);
+    }
+
+    /**
+     * Get Demographic Analytics
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function demographics(Request $request)
+    {
+        // 1. Borrowers by Course
+        $byCourse = Transaction::query()
+            ->join('users', 'transactions.user_id', '=', 'users.id')
+            ->select('users.course', DB::raw('count(*) as total'))
+            ->whereNotNull('users.course')
+            ->where('users.role', 'student') // Ensure only students
+            ->groupBy('users.course')
+            ->orderByDesc('total')
+            ->get();
+
+        // 2. Borrowers by Year Level
+        $byYear = Transaction::query()
+            ->join('users', 'transactions.user_id', '=', 'users.id')
+            ->select('users.year_level', DB::raw('count(*) as total'))
+            ->whereNotNull('users.year_level')
+            ->where('users.role', 'student')
+            ->groupBy('users.year_level')
+            ->orderBy('users.year_level')
+            ->get();
+
+        return response()->json([
+            'by_course' => $byCourse,
+            'by_year' => $byYear
+        ]);
     }
 
     /**
@@ -160,13 +204,16 @@ class ReportController extends Controller
                     break;
 
                 case 'students':
-                    fputcsv($file, ['Rank', 'Student Name', 'Student ID', 'Books Borrowed', 'Active Loans']);
+                    fputcsv($file, ['Rank', 'Student Name', 'Student ID', 'Course', 'Year', 'Section', 'Books Borrowed', 'Active Loans']);
                     $data = $this->getTopStudentsData($request);
                     foreach ($data as $index => $row) {
                         fputcsv($file, [
                             $index + 1,
                             $row->name,
                             $row->student_id,
+                            $row->course,
+                            $row->year_level,
+                            $row->section,
                             $row->borrow_count,
                             $row->active_loans
                         ]);
@@ -228,11 +275,14 @@ class ReportController extends Controller
             ->select(
                 'users.name',
                 'users.student_id',
+                'users.course',
+                'users.year_level',
+                'users.section',
                 DB::raw('COUNT(transactions.id) as borrow_count'),
                 DB::raw('SUM(CASE WHEN transactions.returned_at IS NULL THEN 1 ELSE 0 END) as active_loans')
             )
             ->where('users.role', 'student')
-            ->groupBy('users.id', 'users.name', 'users.student_id');
+            ->groupBy('users.id', 'users.name', 'users.student_id', 'users.course', 'users.year_level', 'users.section');
 
         if ($request->has('start_date')) {
             $query->where('transactions.borrowed_at', '>=', $request->start_date);

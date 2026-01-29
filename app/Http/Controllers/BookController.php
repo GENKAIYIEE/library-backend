@@ -292,16 +292,30 @@ class BookController extends Controller
     {
         $totalTitles = \App\Models\BookTitle::count();
         $totalCopies = \App\Models\BookAsset::count();
+
         // Count active transactions (where 'returned_at' is null)
         $activeLoans = \App\Models\Transaction::whereNull('returned_at')->count();
+
+        // Count overdue loans
+        $overdueLoans = \App\Models\Transaction::whereNull('returned_at')
+            ->where('due_date', '<', now())
+            ->count();
+
         // Count total students (users who are NOT 'admin')
         $totalStudents = \App\Models\User::where('role', '!=', 'admin')->count();
+
+        // Financial Stats
+        $totalFines = \App\Models\Transaction::sum('penalty_amount');
+        $collectedFines = \App\Models\Transaction::where('payment_status', 'paid')->sum('penalty_amount');
 
         return response()->json([
             'titles' => $totalTitles,
             'copies' => $totalCopies,
             'loans' => $activeLoans,
-            'students' => $totalStudents
+            'overdue' => $overdueLoans,
+            'students' => $totalStudents,
+            'total_fines' => $totalFines,
+            'collected_fines' => $collectedFines
         ]);
     }
     // UPDATE an existing book

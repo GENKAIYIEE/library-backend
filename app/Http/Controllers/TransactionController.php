@@ -6,28 +6,30 @@ use Illuminate\Http\Request;
 use App\Models\Transaction;
 use App\Models\BookAsset;
 use App\Models\User;
+use App\Models\LibrarySetting;
 use Carbon\Carbon;
 
 class TransactionController extends Controller
 {
-    // Course-based loan periods (in days)
-    private function getLoanDays($course)
+    // Get loan days from settings (same for all students)
+    private function getLoanDays(): int
     {
-        $periods = [
-            'Maritime' => 1,
-            'BSIT' => 7,
-            'BSED' => 7,
-            'BEED' => 7,
-            'BSHM' => 7,
-            'BS Criminology' => 7,
-            'BSBA' => 7,
-            'BS Tourism' => 7
-        ];
-
-        return $periods[$course] ?? 7; // Default 7 days
+        return LibrarySetting::getDefaultLoanDays();
     }
 
-    // 1. BORROW A BOOK (With Course-Specific Rules)
+    // Get max loans per student from settings
+    private function getMaxLoansPerStudent(): int
+    {
+        return LibrarySetting::getMaxLoansPerStudent();
+    }
+
+    // Get fine per day from settings
+    private function getFinePerDay(): float
+    {
+        return LibrarySetting::getFinePerDay();
+    }
+
+    // 1. BORROW A BOOK
     public function borrow(Request $request)
     {
         // 1. Validate
@@ -53,15 +55,18 @@ class TransactionController extends Controller
             ], 403);
         }
 
-        // 4. Check if student already has too many books (optional limit)
+        // 4. Check if student already has too many books (dynamic limit from settings)
+        $maxLoans = $this->getMaxLoansPerStudent();
         $activeLoans = Transaction::where('user_id', $student->id)
             ->whereNull('returned_at')
             ->count();
 
-        if ($activeLoans >= 3) {
+        if ($activeLoans >= $maxLoans) {
             return response()->json([
-                'message' => 'Student has reached the maximum limit of 3 active loans.',
-                'blocked' => true
+                'message' => "Student has reached the maximum limit of {$maxLoans} active loans.",
+                'blocked' => true,
+                'max_loans' => $maxLoans,
+                'current_loans' => $activeLoans
             ], 403);
         }
 
@@ -70,8 +75,8 @@ class TransactionController extends Controller
             return response()->json(['message' => 'Book is already borrowed!'], 400);
         }
 
-        // 6. Calculate due date based on course
-        $loanDays = $this->getLoanDays($student->course);
+        // 6. Calculate due date (same for all students)
+        $loanDays = $this->getLoanDays();
         $dueDate = Carbon::now()->addDays($loanDays);
 
         // 7. Create Transaction
@@ -127,7 +132,7 @@ class TransactionController extends Controller
             $diffInDays = $dueDate->startOfDay()->diffInDays($now->startOfDay());
             $daysLate = $diffInDays;
 
-            $finePerDay = 5.00; // <--- RULE: 5 PESOS PER DAY
+            $finePerDay = $this->getFinePerDay(); // Dynamic rate from settings
             $penalty = $daysLate * $finePerDay;
         }
 

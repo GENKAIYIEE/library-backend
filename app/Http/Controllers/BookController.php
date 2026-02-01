@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\BookTitle;
 use App\Models\BookAsset;
+use App\Models\LibrarySetting;
 use App\Services\GoogleBooksService;
 use App\Http\Requests\StoreBookTitleRequest;
 use App\Http\Requests\UpdateBookTitleRequest;
@@ -147,7 +148,7 @@ class BookController extends Controller
     public function storeTitle(StoreBookTitleRequest $request)
     {
         $fields = $request->validate([
-            'title' => 'required|string|max:255',
+            'title' => 'required|string|max:255|unique:book_titles,title',
             'subtitle' => 'nullable|string|max:255',
             'author' => 'required|string|max:255',
             'category' => 'required|string|max:100',
@@ -326,7 +327,7 @@ class BookController extends Controller
             return response()->json(['message' => 'Not found'], 404);
 
         $fields = $request->validate([
-            'title' => 'required|string|max:255',
+            'title' => 'required|string|max:255|unique:book_titles,title,' . $id,
             'subtitle' => 'nullable|string|max:255',
             'author' => 'required|string|max:255',
             'category' => 'required|string|max:100',
@@ -536,9 +537,10 @@ class BookController extends Controller
             ->whereNull('returned_at')
             ->count();
 
-        // Fix: Direct check for Maritime course since getCategoryForCourse is deprecated
-        // Maritime students get 1 day loan, others get 7 days
-        $loanDays = ($student->course === 'Maritime') ? 1 : 7;
+        // Dynamic settings from LibrarySetting (same for all students)
+        $maxLoans = LibrarySetting::getMaxLoansPerStudent();
+        $loanDays = LibrarySetting::getDefaultLoanDays();
+        $finePerDay = LibrarySetting::getFinePerDay();
 
         return response()->json([
             'student_id' => $student->student_id,
@@ -548,10 +550,12 @@ class BookController extends Controller
             'section' => $student->section,
             'pending_fines' => $pendingFines,
             'active_loans' => $activeLoans,
+            'max_loans' => $maxLoans,
             'loan_days' => $loanDays,
-            'is_cleared' => $pendingFines == 0 && $activeLoans < 3,
+            'fine_per_day' => $finePerDay,
+            'is_cleared' => $pendingFines == 0 && $activeLoans < $maxLoans,
             'block_reason' => $pendingFines > 0 ? 'Pending fines: ₱' . number_format($pendingFines, 2) :
-                ($activeLoans >= 3 ? 'Max 3 books reached' : null)
+                ($activeLoans >= $maxLoans ? "Max {$maxLoans} books reached" : null)
         ]);
     }
 

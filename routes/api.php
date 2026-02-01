@@ -8,6 +8,7 @@ use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\AttendanceController;
+use App\Http\Controllers\SettingController;
 
 /*
 |--------------------------------------------------------------------------
@@ -22,6 +23,9 @@ Route::get('/books/borrowed', [BookController::class, 'getBorrowedBooks']);
 Route::get('/books/lookup/{barcode}', [BookController::class, 'lookup']);
 Route::get('/books/lookup-isbn/{isbn}', [BookController::class, 'lookupIsbn']);
 Route::get('/students/{studentId}/clearance', [BookController::class, 'checkClearance']);
+
+// Public Settings (for circulation display)
+Route::get('/settings/circulation', [SettingController::class, 'circulation']);
 
 // Public (Kiosk) Routes
 Route::prefix('public')->group(function () {
@@ -44,6 +48,12 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/user', function (Request $request) {
         return $request->user();
     });
+
+    // Settings Management (Admin)
+    Route::get('/settings', [SettingController::class, 'index']);
+    Route::put('/settings', [SettingController::class, 'bulkUpdate']);
+    Route::put('/settings/{key}', [SettingController::class, 'update']);
+    Route::post('/settings/reset', [SettingController::class, 'reset']);
 
     // Book Management
     Route::post('/books/title', [BookController::class, 'storeTitle']);

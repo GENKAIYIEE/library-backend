@@ -148,7 +148,7 @@ class BookController extends Controller
     public function storeTitle(StoreBookTitleRequest $request)
     {
         $fields = $request->validate([
-            'title' => 'required|string|max:255|unique:book_titles,title',
+            'title' => 'required|string|max:255',
             'subtitle' => 'nullable|string|max:255',
             'author' => 'required|string|max:255',
             'category' => 'required|string|max:100',
@@ -175,100 +175,117 @@ class BookController extends Controller
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120' // 5MB max
         ]);
 
-        // Handle image upload
-        $imagePath = null;
-        if ($request->hasFile('image')) {
-            $image = $request->file('image');
-            $filename = time() . '_' . uniqid() . '.' . $image->getClientOriginalExtension();
-
-            // Ensure directory exists
-            $uploadPath = public_path('uploads/books');
-            if (!file_exists($uploadPath)) {
-                mkdir($uploadPath, 0755, true);
-            }
-
-            $image->move($uploadPath, $filename);
-            $imagePath = 'uploads/books/' . $filename;
+        // Case-insensitive duplicate title check
+        $existingBook = BookTitle::whereRaw('LOWER(title) = ?', [strtolower($fields['title'])])->first();
+        if ($existingBook) {
+            return response()->json([
+                'message' => 'A book with this title already exists.',
+                'errors' => ['title' => ['A book with this title already exists (case-insensitive).']]
+            ], 422);
         }
 
-        // Auto-generate ISBN if not provided
-        $isbn = $fields['isbn'] ?? null;
-        if (empty($isbn)) {
-            do {
-                $isbn = (string) mt_rand(1000000000000, 9999999999999);
-            } while (BookTitle::where('isbn', $isbn)->exists());
-        }
+        try {
+            // Handle image upload
+            $imagePath = null;
+            if ($request->hasFile('image')) {
+                $image = $request->file('image');
+                $filename = time() . '_' . uniqid() . '.' . $image->getClientOriginalExtension();
 
-        // Create the book title
-        $bookTitle = BookTitle::create([
-            'title' => $fields['title'],
-            'subtitle' => $fields['subtitle'] ?? null,
-            'author' => $fields['author'],
-            'category' => $fields['category'],
-            'isbn' => $isbn,
+                // Ensure directory exists
+                $uploadPath = public_path('uploads/books');
+                if (!file_exists($uploadPath)) {
+                    mkdir($uploadPath, 0755, true);
+                }
 
-            'lccn' => $fields['lccn'] ?? null,
-            'issn' => $fields['issn'] ?? null,
-            'publisher' => $fields['publisher'] ?? null,
-            'place_of_publication' => $fields['place_of_publication'] ?? null,
-            'published_year' => $fields['published_year'] ?? null,
-            'copyright_year' => $fields['copyright_year'] ?? null,
-            'call_number' => $fields['call_number'] ?? null,
-            'physical_description' => $fields['physical_description'] ?? null,
-            'pages' => $fields['pages'] ?? null,
-
-            'edition' => $fields['edition'] ?? null,
-            'series' => $fields['series'] ?? null,
-            'volume' => $fields['volume'] ?? null,
-            'price' => $fields['price'] ?? null,
-            'book_penalty' => $fields['book_penalty'] ?? null,
-            'language' => $fields['language'] ?? null,
-            'description' => $fields['description'] ?? null,
-            'location' => $fields['location'] ?? null,
-            'accession_no' => $fields['accession_no'] ?? null,
-            'image_path' => $imagePath
-        ]);
-
-        // Auto-generate physical copies (BookAsset records)
-        $copies = isset($fields['copies']) ? (int) $fields['copies'] : 0;
-        $createdAssets = [];
-
-        // Get the base accession number from request or generate one
-        $baseAccession = $request->input('accession_no');
-
-        for ($i = 0; $i < $copies; $i++) {
-            if ($i === 0 && $baseAccession && !BookAsset::where('asset_code', $baseAccession)->exists()) {
-                // Use the provided accession number for the first copy
-                $assetCode = $baseAccession;
-            } else {
-                // Generate sequential asset code for additional copies
-                $assetCode = $this->generateAssetBarcode();
+                $image->move($uploadPath, $filename);
+                $imagePath = 'uploads/books/' . $filename;
             }
 
-            // Ensure uniqueness
-            while (BookAsset::where('asset_code', $assetCode)->exists()) {
-                $assetCode = $this->generateAssetBarcode();
+            // Auto-generate ISBN if not provided
+            $isbn = $fields['isbn'] ?? null;
+            if (empty($isbn)) {
+                do {
+                    $isbn = (string) mt_rand(1000000000000, 9999999999999);
+                } while (BookTitle::where('isbn', $isbn)->exists());
             }
 
-            $asset = BookAsset::create([
-                'book_title_id' => $bookTitle->id,
-                'asset_code' => $assetCode,
-                'building' => null, // Default location from book title
-                'aisle' => null,
-                'shelf' => null,
-                'status' => 'available'
+            // Create the book title
+            $bookTitle = BookTitle::create([
+                'title' => $fields['title'],
+                'subtitle' => $fields['subtitle'] ?? null,
+                'author' => $fields['author'],
+                'category' => $fields['category'],
+                'isbn' => $isbn,
+
+                'lccn' => $fields['lccn'] ?? null,
+                'issn' => $fields['issn'] ?? null,
+                'publisher' => $fields['publisher'] ?? null,
+                'place_of_publication' => $fields['place_of_publication'] ?? null,
+                'published_year' => $fields['published_year'] ?? null,
+                'copyright_year' => $fields['copyright_year'] ?? null,
+                'call_number' => $fields['call_number'] ?? null,
+                'physical_description' => $fields['physical_description'] ?? null,
+                'pages' => $fields['pages'] ?? null,
+
+                'edition' => $fields['edition'] ?? null,
+                'series' => $fields['series'] ?? null,
+                'volume' => $fields['volume'] ?? null,
+                'price' => $fields['price'] ?? null,
+                'book_penalty' => $fields['book_penalty'] ?? null,
+                'language' => $fields['language'] ?? null,
+                'description' => $fields['description'] ?? null,
+                'location' => $fields['location'] ?? null,
+                'accession_no' => $fields['accession_no'] ?? null,
+                'image_path' => $imagePath
             ]);
-            $createdAssets[] = $asset;
+
+            // Auto-generate physical copies (BookAsset records)
+            $copies = isset($fields['copies']) ? (int) $fields['copies'] : 0;
+            $createdAssets = [];
+
+            // Get the base accession number from request or generate one
+            $baseAccession = $request->input('accession_no');
+
+            for ($i = 0; $i < $copies; $i++) {
+                if ($i === 0 && $baseAccession && !BookAsset::where('asset_code', $baseAccession)->exists()) {
+                    // Use the provided accession number for the first copy
+                    $assetCode = $baseAccession;
+                } else {
+                    // Generate sequential asset code for additional copies
+                    $assetCode = $this->generateAssetBarcode();
+                }
+
+                // Ensure uniqueness
+                while (BookAsset::where('asset_code', $assetCode)->exists()) {
+                    $assetCode = $this->generateAssetBarcode();
+                }
+
+                $asset = BookAsset::create([
+                    'book_title_id' => $bookTitle->id,
+                    'asset_code' => $assetCode,
+                    'building' => null, // Default location from book title
+                    'aisle' => null,
+                    'shelf' => null,
+                    'status' => 'available'
+                ]);
+                $createdAssets[] = $asset;
+            }
+
+            // Load the assets relationship for response
+            $bookTitle->load('assets');
+
+            return response()->json([
+                'message' => 'Book created successfully',
+                'book' => $bookTitle,
+                'copies_created' => count($createdAssets)
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to create book. Please try again.',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
         }
-
-        // Load the assets relationship for response
-        $bookTitle->load('assets');
-
-        return response()->json([
-            'message' => 'Book created successfully',
-            'book' => $bookTitle,
-            'copies_created' => count($createdAssets)
-        ], 201);
     }
 
     // 4. ADD PHYSICAL COPY TO SHELF (Admin Only)

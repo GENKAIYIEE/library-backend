@@ -38,66 +38,74 @@ class TransactionController extends Controller
             'asset_code' => 'required|exists:book_assets,asset_code'
         ]);
 
-        // 2. Find Student and Book
-        $student = \App\Models\User::where('student_id', $request->student_id)->first();
-        $bookAsset = \App\Models\BookAsset::where('asset_code', $request->asset_code)->first();
+        try {
+            // 2. Find Student and Book
+            $student = \App\Models\User::where('student_id', $request->student_id)->first();
+            $bookAsset = \App\Models\BookAsset::where('asset_code', $request->asset_code)->first();
 
-        // 3. CLEARANCE CHECK: Block if student has pending fines
-        $pendingFines = Transaction::where('user_id', $student->id)
-            ->where('payment_status', 'pending')
-            ->sum('penalty_amount');
+            // 3. CLEARANCE CHECK: Block if student has pending fines
+            $pendingFines = Transaction::where('user_id', $student->id)
+                ->where('payment_status', 'pending')
+                ->sum('penalty_amount');
 
-        if ($pendingFines > 0) {
+            if ($pendingFines > 0) {
+                return response()->json([
+                    'message' => 'Student has pending fines of ₱' . number_format($pendingFines, 2) . '. Please settle before borrowing.',
+                    'blocked' => true,
+                    'pending_fines' => $pendingFines
+                ], 403);
+            }
+
+            // 4. Check if student already has too many books (dynamic limit from settings)
+            $maxLoans = $this->getMaxLoansPerStudent();
+            $activeLoans = Transaction::where('user_id', $student->id)
+                ->whereNull('returned_at')
+                ->count();
+
+            if ($activeLoans >= $maxLoans) {
+                return response()->json([
+                    'message' => "Student has reached the maximum limit of {$maxLoans} active loans.",
+                    'blocked' => true,
+                    'max_loans' => $maxLoans,
+                    'current_loans' => $activeLoans
+                ], 403);
+            }
+
+            // 5. Check if Book is available
+            if ($bookAsset->status !== 'available') {
+                return response()->json(['message' => 'Book is already borrowed!'], 400);
+            }
+
+            // 6. Calculate due date (same for all students)
+            $loanDays = $this->getLoanDays();
+            $dueDate = Carbon::now()->addDays($loanDays);
+
+            // 7. Create Transaction
+            $transaction = Transaction::create([
+                'user_id' => $student->id,
+                'book_asset_id' => $bookAsset->id,
+                'borrowed_at' => Carbon::now(),
+                'due_date' => $dueDate,
+                'processed_by' => $request->user()?->id
+            ]);
+
+            // 8. Update Book Status
+            $bookAsset->update(['status' => 'borrowed']);
+
             return response()->json([
-                'message' => 'Student has pending fines of ₱' . number_format($pendingFines, 2) . '. Please settle before borrowing.',
-                'blocked' => true,
-                'pending_fines' => $pendingFines
-            ], 403);
-        }
+                'message' => 'Success! Book borrowed.',
+                'data' => $transaction,
+                'loan_days' => $loanDays,
+                'due_date' => $dueDate->format('Y-m-d'),
+                'course' => $student->course
+            ]);
 
-        // 4. Check if student already has too many books (dynamic limit from settings)
-        $maxLoans = $this->getMaxLoansPerStudent();
-        $activeLoans = Transaction::where('user_id', $student->id)
-            ->whereNull('returned_at')
-            ->count();
-
-        if ($activeLoans >= $maxLoans) {
+        } catch (\Exception $e) {
             return response()->json([
-                'message' => "Student has reached the maximum limit of {$maxLoans} active loans.",
-                'blocked' => true,
-                'max_loans' => $maxLoans,
-                'current_loans' => $activeLoans
-            ], 403);
+                'message' => 'Failed to process borrow request. Please try again.',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
         }
-
-        // 5. Check if Book is available
-        if ($bookAsset->status !== 'available') {
-            return response()->json(['message' => 'Book is already borrowed!'], 400);
-        }
-
-        // 6. Calculate due date (same for all students)
-        $loanDays = $this->getLoanDays();
-        $dueDate = Carbon::now()->addDays($loanDays);
-
-        // 7. Create Transaction
-        $transaction = Transaction::create([
-            'user_id' => $student->id,
-            'book_asset_id' => $bookAsset->id,
-            'borrowed_at' => Carbon::now(),
-            'due_date' => $dueDate,
-            'processed_by' => $request->user()?->id
-        ]);
-
-        // 8. Update Book Status
-        $bookAsset->update(['status' => 'borrowed']);
-
-        return response()->json([
-            'message' => 'Success! Book borrowed.',
-            'data' => $transaction,
-            'loan_days' => $loanDays,
-            'due_date' => $dueDate->format('Y-m-d'),
-            'course' => $student->course
-        ]);
     }
 
     public function returnBook(Request $request)
@@ -106,53 +114,61 @@ class TransactionController extends Controller
             'asset_code' => 'required|exists:book_assets,asset_code'
         ]);
 
-        // 1. Find the Book
-        $bookAsset = \App\Models\BookAsset::where('asset_code', $request->asset_code)->first();
+        try {
+            // 1. Find the Book
+            $bookAsset = \App\Models\BookAsset::where('asset_code', $request->asset_code)->first();
 
-        // 2. Find the Active Transaction
-        $transaction = \App\Models\Transaction::where('book_asset_id', $bookAsset->id)
-            ->whereNull('returned_at')
-            ->first();
+            // 2. Find the Active Transaction
+            $transaction = \App\Models\Transaction::where('book_asset_id', $bookAsset->id)
+                ->whereNull('returned_at')
+                ->first();
 
-        if (!$transaction) {
-            return response()->json(['message' => 'This book is not currently borrowed!'], 400);
+            if (!$transaction) {
+                return response()->json(['message' => 'This book is not currently borrowed!'], 400);
+            }
+
+            // 3. Check for Late Return (Strict Day Comparison)
+            $now = Carbon::now();
+            $dueDate = Carbon::parse($transaction->due_date)->endOfDay(); // End of due date (23:59:59)
+
+            $penalty = 0;
+            $daysLate = 0;
+
+            // If 'Now' is strictly after Due Date
+            if ($now->gt($dueDate)) {
+                // Calculate full days difference
+                // We use startOfDay to compare "dates" regardless of "time"
+                $diffInDays = $dueDate->startOfDay()->diffInDays($now->startOfDay());
+                $daysLate = $diffInDays;
+
+                $finePerDay = $this->getFinePerDay(); // Dynamic rate from settings
+                $penalty = $daysLate * $finePerDay;
+            }
+
+            // 4. Update the Record
+            $transaction->update([
+                'returned_at' => Carbon::now(),
+                'penalty_amount' => $penalty,
+                'payment_status' => $penalty > 0 ? 'pending' : 'paid'
+            ]);
+
+            // 5. Make the book available again
+            $bookAsset->update(['status' => 'available']);
+
+            // 6. Send the result back to the Frontend
+            return response()->json([
+                'message' => 'Book returned successfully',
+                'days_late' => $daysLate,
+                'penalty' => $penalty,
+                'transaction' => $transaction->load('user')
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to process return. Please try again.',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
         }
-
-        // 3. Check for Late Return (Strict Day Comparison)
-        $now = Carbon::now();
-        $dueDate = Carbon::parse($transaction->due_date)->endOfDay(); // End of due date (23:59:59)
-
-        $penalty = 0;
-        $daysLate = 0;
-
-        // If 'Now' is strictly after Due Date
-        if ($now->gt($dueDate)) {
-            // Calculate full days difference
-            // We use startOfDay to compare "dates" regardless of "time"
-            $diffInDays = $dueDate->startOfDay()->diffInDays($now->startOfDay());
-            $daysLate = $diffInDays;
-
-            $finePerDay = $this->getFinePerDay(); // Dynamic rate from settings
-            $penalty = $daysLate * $finePerDay;
-        }
-
-        // 4. Update the Record
-        $transaction->update([
-            'returned_at' => Carbon::now(),
-            'penalty_amount' => $penalty,
-            'payment_status' => $penalty > 0 ? 'pending' : 'paid'
-        ]);
-
-        // 5. Make the book available again
-        $bookAsset->update(['status' => 'available']);
-
-        // 6. Send the result back to the Frontend
-        return response()->json([
-            'message' => 'Book returned successfully',
-            'days_late' => $daysLate,
-            'penalty' => $penalty,
-            'transaction' => $transaction->load('user')
-        ]);
     }
 
     // NEW: Mark a book as lost

@@ -10,6 +10,7 @@ class PublicBookController extends Controller
     /**
      * Display a listing of the resource for the public catalog.
      * Supports search and pagination.
+     * Excludes books that are damaged or lost (unavailable for circulation).
      */
     public function index(Request $request)
     {
@@ -19,8 +20,18 @@ class PublicBookController extends Controller
         $query = BookTitle::withCount([
             'assets as available_copies' => function ($query) {
                 $query->where('status', 'available');
+            },
+            'assets as borrowed_copies' => function ($query) {
+                $query->where('status', 'borrowed');
+            },
+            'assets as damaged_copies' => function ($query) {
+                $query->where('status', 'damaged');
             }
-        ]);
+        ])
+        // Only include books that have at least one asset that is NOT lost/archived (include damaged)
+        ->whereHas('assets', function ($q) {
+            $q->whereIn('status', ['available', 'borrowed', 'damaged']);
+        });
 
         if ($search) {
             $query->where(function ($q) use ($search) {

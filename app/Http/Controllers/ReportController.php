@@ -399,4 +399,81 @@ class ReportController extends Controller
             'students' => $breakdown
         ]);
     }
+
+    /**
+     * Get Borrowed Books Statistics by Call Number Range and Month
+     * Uses the monthly_statistics table that is auto-updated on borrow
+     */
+    public function statistics(Request $request)
+    {
+        try {
+            // Default to current academic year
+            // If current month is Jan-May (e.g. Feb 2026), AY started in 2025
+            // If current month is June-Dec (e.g. Sept 2025), AY starts in 2025
+            $currentYear = (int) date('Y');
+            $currentMonth = (int) date('n');
+            $defaultYear = ($currentMonth < 6) ? $currentYear - 1 : $currentYear;
+            
+            $year = (int) $request->input('year', $defaultYear);
+            
+            // Ranges: 000-099, 100-199, ... 900-999
+            $ranges = [];
+            for ($i = 0; $i < 10; $i++) {
+                $start = $i * 100;
+                $end = $start + 99;
+                $ranges[] = sprintf("%03d-%03d", $start, $end);
+            }
+
+            // Months order: June(6) to Dec(12), Jan(1) to May(5)
+            $months = [6, 7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5];
+            
+            // Initialize matrix
+            $matrix = [];
+            foreach ($ranges as $range) {
+                foreach ($months as $m) {
+                    $matrix[$range][$m] = 0;
+                }
+            }
+
+            // Fetch from monthly_statistics table
+            // Academic year spans: June of $year to May of $year+1
+            $stats = \App\Models\MonthlyStatistic::where(function ($query) use ($year) {
+                // June to December of the start year
+                $query->where(function ($q) use ($year) {
+                    $q->where('year', $year)
+                      ->whereIn('month', [6, 7, 8, 9, 10, 11, 12]);
+                })
+                // January to May of the next year
+                ->orWhere(function ($q) use ($year) {
+                    $q->where('year', $year + 1)
+                      ->whereIn('month', [1, 2, 3, 4, 5]);
+                });
+            })->get();
+
+            // Populate matrix with data
+            foreach ($stats as $stat) {
+                $rangeKey = sprintf("%03d-%03d", $stat->range_start, $stat->range_end);
+                if (isset($matrix[$rangeKey][$stat->month])) {
+                    $matrix[$rangeKey][$stat->month] = $stat->count;
+                }
+            }
+
+            return response()->json([
+                'year' => $year,
+                'academic_year' => "A.Y. $year-" . ($year + 1),
+                'ranges' => $ranges,
+                'months' => $months,
+                'data' => $matrix
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Statistics endpoint error: ' . $e->getMessage());
+            return response()->json([
+                'error' => $e->getMessage(),
+                'year' => $request->input('year'),
+                'ranges' => [],
+                'months' => [],
+                'data' => []
+            ], 500);
+        }
+    }
 }

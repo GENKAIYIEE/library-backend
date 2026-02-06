@@ -62,6 +62,16 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/books/random-barcode', [BookController::class, 'generateRandomBarcode']);
     Route::get('/books/lost', [BookController::class, 'getLostBooks']); // NEW
     Route::post('/books/assets/{id}/restore', [BookController::class, 'restoreBook']); // NEW
+    
+    // Damaged Book Management
+    Route::get('/books/damaged', [BookController::class, 'getDamagedBooks']);
+    Route::post('/books/assets/{id}/mark-damaged', [BookController::class, 'markAsDamaged']);
+    Route::post('/books/mark-damaged', [BookController::class, 'markAsDamaged']); // By asset_code in body
+    Route::post('/books/assets/{id}/repair', [BookController::class, 'repairBook']);
+
+    // Category-Based Inventory Navigation
+    Route::get('/books/categories/summary', [BookController::class, 'getCategorySummary']);
+    Route::get('/books/by-category/{category}', [BookController::class, 'getBooksByCategory'])->where('category', '.*');
 
     // Circulation (The New Stuff)
     Route::post('/borrow', [TransactionController::class, 'borrow']);
@@ -73,6 +83,10 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::post('/transactions/{id}/pay', [TransactionController::class, 'markAsPaid']);
     Route::post('/transactions/{id}/waive', [TransactionController::class, 'waiveFine']);
     Route::post('/transactions/{id}/unpaid', [TransactionController::class, 'markAsUnpaid']); // NEW
+    Route::delete('/transactions/{id}/force', [TransactionController::class, 'forceDelete']); // NEW
+    Route::post('/transactions/force-delete-bulk', [TransactionController::class, 'forceDeleteBulk']); // NEW Bulk
+
+
     Route::get('/students/{id}/fines', [TransactionController::class, 'getStudentFines']); // NEW
 
     // Student Management
@@ -82,6 +96,10 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::delete('/students/{id}', [App\Http\Controllers\StudentController::class, 'destroy']);
     Route::post('/students/batch', [App\Http\Controllers\StudentController::class, 'batchStore']);
     Route::get('/students/{id}/history', [App\Http\Controllers\StudentController::class, 'history']);
+
+    // Course-Based Student Navigation
+    Route::get('/students/courses/summary', [App\Http\Controllers\StudentController::class, 'getCourseSummary']);
+    Route::get('/students/by-course/{course}', [App\Http\Controllers\StudentController::class, 'getStudentsByCourse'])->where('course', '.*');
 
     // Gamification: Leaderboard & Achievements
     Route::get('/students/leaderboard', [App\Http\Controllers\StudentController::class, 'leaderboard']);
@@ -105,11 +123,13 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::post('/notifications/{id}/read', [App\Http\Controllers\NotificationController::class, 'markAsRead']);
     Route::post('/notifications/read-all', [App\Http\Controllers\NotificationController::class, 'markAllRead']);
 
+
     // Reports (NEW)
     Route::get('/reports/most-borrowed', [ReportController::class, 'mostBorrowed']);
     Route::get('/reports/top-students', [ReportController::class, 'topStudents']);
     Route::get('/reports/penalties', [ReportController::class, 'penalties']);
     Route::get('/reports/department', [ReportController::class, 'departmentStats']);
+    Route::get('/reports/statistics', [ReportController::class, 'statistics']);
     Route::get('/reports/demographics', [ReportController::class, 'demographics']);
     Route::get('/reports/export/{type}', [ReportController::class, 'exportCsv']);
 
@@ -117,8 +137,4 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/users', [UserController::class, 'index']);
     Route::post('/users', [UserController::class, 'store']);
     Route::post('/users/check-unique', [UserController::class, 'checkUnique']);
-
-    // Attendance Logs (Admin)
-    Route::get('/attendance', [App\Http\Controllers\AttendanceController::class, 'index']);
-    Route::get('/attendance/today', [App\Http\Controllers\AttendanceController::class, 'today']);
 });

@@ -114,17 +114,30 @@ class AttendanceController extends Controller
      */
     public function today(Request $request)
     {
-        // Accept optional date parameter, default to today
-        $dateInput = $request->input('date', Carbon::today()->toDateString());
-        $parsedDate = Carbon::parse($dateInput);
-
         $query = AttendanceLog::with([
             'user' => function ($query) {
                 $query->select('id', 'name', 'student_id', 'course', 'year_level', 'profile_picture');
             }
-        ])
-            ->whereDate('logged_at', $parsedDate)
-            ->orderBy('logged_at', 'asc');
+        ]);
+
+        // Check for date range
+        if ($request->has('start_date') && $request->has('end_date')) {
+            $query->whereDate('logged_at', '>=', $request->start_date)
+                  ->whereDate('logged_at', '<=', $request->end_date);
+            
+            $dateLabel = Carbon::parse($request->start_date)->format('M j') . ' - ' . Carbon::parse($request->end_date)->format('M j, Y');
+            $dateIso = $request->end_date; // Default to end date for picker sync or keep as is
+        } else {
+            // Default to single date (today or specified)
+            $dateInput = $request->input('date', Carbon::today()->toDateString());
+            $parsedDate = Carbon::parse($dateInput);
+            $query->whereDate('logged_at', $parsedDate);
+            
+            $dateLabel = $parsedDate->format('F j, Y');
+            $dateIso = $parsedDate->toDateString();
+        }
+
+        $query->orderBy('logged_at', 'asc');
 
         // Check if we need all records for reporting
         if ($request->has('all') && $request->all == 'true') {
@@ -140,8 +153,8 @@ class AttendanceController extends Controller
             return response()->json([
                 'logs' => $logs,
                 'count' => $logs->count(),
-                'date' => $parsedDate->format('F j, Y'),
-                'date_iso' => $parsedDate->toDateString(),
+                'date' => $dateLabel,
+                'date_iso' => $dateIso,
             ]);
         }
 
@@ -163,8 +176,8 @@ class AttendanceController extends Controller
                 'total' => $logs->total(),
             ],
             'count' => $logs->total(), // Use total count instead of collection count
-            'date' => $parsedDate->format('F j, Y'),
-            'date_iso' => $parsedDate->toDateString(), // For frontend date picker sync
+            'date' => $dateLabel,
+            'date_iso' => $dateIso, // For frontend date picker sync
         ]);
     }
 }

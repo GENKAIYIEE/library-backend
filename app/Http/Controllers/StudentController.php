@@ -71,9 +71,9 @@ class StudentController extends Controller
 
         $existingUser = User::withTrashed()->where('student_id', $studentId)->first();
 
-        // Check email uniqueness if email is provided
+        // Check email uniqueness if email is provided (exclude soft-deleted users)
         if ($email) {
-            $emailQuery = User::where('email', $email);
+            $emailQuery = User::whereNull('deleted_at')->where('email', $email);
             if ($existingUser) {
                 $emailQuery->where('id', '!=', $existingUser->id);
             }
@@ -480,5 +480,71 @@ class StudentController extends Controller
         ];
 
         return $badges;
+    }
+
+    /**
+     * Get course summary with student counts.
+     * Returns all unique courses with total students count.
+     */
+    public function getCourseSummary()
+    {
+        $courses = User::where('role', 'student')
+            ->selectRaw('course, COUNT(*) as total_students')
+            ->groupBy('course')
+            ->orderBy('course')
+            ->get()
+            ->map(function ($course) {
+                // Get additional stats per course
+                $activeLoans = User::where('role', 'student')
+                    ->where('course', $course->course)
+                    ->withCount(['transactions as active_loans' => function ($q) {
+                        $q->whereNull('returned_at');
+                    }])
+                    ->get()
+                    ->sum('active_loans');
+
+                return [
+                    'course' => $course->course ?: 'Not Specified',
+                    'total_students' => $course->total_students,
+                    'active_loans' => $activeLoans
+                ];
+            });
+
+        return response()->json($courses);
+    }
+
+    /**
+     * Get paginated students by course.
+     * @param string $course The course to filter by
+     * @param Request $request For pagination (page, per_page) and search
+     */
+    public function getStudentsByCourse(Request $request, $course)
+    {
+        $perPage = $request->input('per_page', 20);
+        $search = $request->input('search', '');
+
+        $query = User::where('role', 'student')
+            ->where('course', $course)
+            ->withCount([
+                'transactions as total_borrowed' => function ($q) {
+                    $q->whereNotNull('returned_at');
+                },
+                'transactions as active_loans' => function ($q) {
+                    $q->whereNull('returned_at');
+                }
+            ]);
+
+        // Apply search filter if provided
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('student_id', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        $students = $query->orderBy('name')->paginate($perPage);
+
+        return response()->json($students);
     }
 }

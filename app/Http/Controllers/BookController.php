@@ -13,15 +13,25 @@ use App\Http\Requests\UpdateBookTitleRequest;
 class BookController extends Controller
 {
     // 1. GET ALL BOOKS (Public Catalog)
-    public function index()
-    {
-        // Get books with a count of how many are 'available'
-        return BookTitle::withCount([
-            'assets as available_copies' => function ($query) {
-                $query->where('status', 'available');
-            }
-        ])->get();
-    }
+public function index()
+{
+    // Get books with counts for each status
+    return BookTitle::withCount([
+        'assets as available_copies' => function ($query) {
+            $query->where('status', 'available');
+        },
+        'assets as borrowed_copies' => function ($query) {
+            $query->where('status', 'borrowed');
+        },
+        'assets as damaged_copies' => function ($query) {
+            $query->where('status', 'damaged');
+        },
+        'assets as lost_copies' => function ($query) {
+            $query->where('status', 'lost');
+        },
+        'assets as total_copies'
+    ])->get();
+}
 
     // 2. SEARCH BOOKS
     public function search($keyword)
@@ -245,6 +255,9 @@ class BookController extends Controller
 
             // Get the base accession number from request or generate one
             $baseAccession = $request->input('accession_no');
+            
+            // Determine status for new copies
+            $initialStatus = $request->boolean('is_damaged') ? 'damaged' : 'available';
 
             for ($i = 0; $i < $copies; $i++) {
                 if ($i === 0 && $baseAccession && !BookAsset::where('asset_code', $baseAccession)->exists()) {
@@ -266,7 +279,7 @@ class BookController extends Controller
                     'building' => null, // Default location from book title
                     'aisle' => null,
                     'shelf' => null,
-                    'status' => 'available'
+                    'status' => $initialStatus
                 ]);
                 $createdAssets[] = $asset;
             }
@@ -792,5 +805,161 @@ class BookController extends Controller
         $asset->save();
 
         return response()->json(['message' => 'Book restored successfully']);
+    }
+
+    /**
+     * Get all books marked as damaged.
+     */
+    public function getDamagedBooks()
+    {
+        $damagedAssets = BookAsset::with(['bookTitle'])
+            ->where('status', 'damaged')
+            ->get();
+
+        return response()->json($damagedAssets);
+    }
+
+    /**
+     * Mark a book asset as damaged.
+     * Accepts either asset ID in URL or asset_code in request body.
+     */
+    public function markAsDamaged(Request $request, $id = null)
+    {
+        // Try to find asset by ID first, then by asset_code
+        $asset = null;
+        
+        if ($id) {
+            $asset = BookAsset::find($id);
+        }
+        
+        if (!$asset && $request->has('asset_code')) {
+            $asset = BookAsset::where('asset_code', $request->asset_code)->first();
+        }
+
+        if (!$asset) {
+            return response()->json(['message' => 'Book copy not found'], 404);
+        }
+
+        // Only available books can be marked as damaged
+        if ($asset->status !== 'available') {
+            return response()->json([
+                'message' => 'Only available books can be marked as damaged. Current status: ' . $asset->status
+            ], 400);
+        }
+
+        $asset->status = 'damaged';
+        $asset->save();
+
+        return response()->json([
+            'message' => 'Book marked as damaged successfully',
+            'new_status' => $asset->status
+        ]);
+    }
+
+    /**
+     * Repair a damaged book (mark as available).
+     */
+    public function repairBook($id)
+    {
+        $asset = BookAsset::find($id);
+
+        if (!$asset) {
+            return response()->json(['message' => 'Book copy not found'], 404);
+        }
+
+        if ($asset->status !== 'damaged') {
+            return response()->json([
+                'message' => 'This book is not marked as damaged. Current status: ' . $asset->status
+            ], 400);
+        }
+
+        $asset->status = 'available';
+        $asset->save();
+
+        return response()->json(['message' => 'Book repaired and restored to inventory successfully']);
+    }
+
+    /**
+     * Get category summary with book counts.
+     * Returns all unique categories with total books and available count.
+     */
+    public function getCategorySummary()
+    {
+        $categories = BookTitle::selectRaw('
+            category,
+            COUNT(*) as total_books
+        ')
+        ->groupBy('category')
+        ->orderBy('category')
+        ->get()
+        ->map(function ($cat) {
+            // Count available books in this category
+            $available = BookTitle::where('category', $cat->category)
+                ->whereHas('assets', function ($q) {
+                    $q->where('status', 'available');
+                })
+                ->count();
+
+            // Get total copies
+            $totalCopies = BookAsset::whereHas('bookTitle', function ($q) use ($cat) {
+                $q->where('category', $cat->category);
+            })->count();
+
+            $availableCopies = BookAsset::whereHas('bookTitle', function ($q) use ($cat) {
+                $q->where('category', $cat->category);
+            })->where('status', 'available')->count();
+
+            return [
+                'category' => $cat->category ?: 'Uncategorized',
+                'total_books' => $cat->total_books,
+                'available_titles' => $available,
+                'total_copies' => $totalCopies,
+                'available_copies' => $availableCopies
+            ];
+        });
+
+        return response()->json($categories);
+    }
+
+    /**
+     * Get paginated books by category.
+     * @param string $category The category to filter by
+     * @param Request $request For pagination (page, per_page) and search
+     */
+    public function getBooksByCategory(Request $request, $category)
+    {
+        $perPage = $request->input('per_page', 20);
+        $search = $request->input('search', '');
+
+        $query = BookTitle::where('category', $category)
+            ->withCount([
+                'assets as available_copies' => function ($query) {
+                    $query->where('status', 'available');
+                },
+                'assets as borrowed_copies' => function ($query) {
+                    $query->where('status', 'borrowed');
+                },
+                'assets as damaged_copies' => function ($query) {
+                    $query->where('status', 'damaged');
+                },
+                'assets as lost_copies' => function ($query) {
+                    $query->where('status', 'lost');
+                },
+                'assets as total_copies'
+            ]);
+
+        // Apply search filter if provided
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('title', 'like', "%{$search}%")
+                  ->orWhere('author', 'like', "%{$search}%")
+                  ->orWhere('isbn', 'like', "%{$search}%")
+                  ->orWhere('call_number', 'like', "%{$search}%");
+            });
+        }
+
+        $books = $query->orderBy('title')->paginate($perPage);
+
+        return response()->json($books);
     }
 }

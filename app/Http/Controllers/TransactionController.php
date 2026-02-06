@@ -7,6 +7,7 @@ use App\Models\Transaction;
 use App\Models\BookAsset;
 use App\Models\User;
 use App\Models\LibrarySetting;
+use App\Models\MonthlyStatistic;
 use Carbon\Carbon;
 
 class TransactionController extends Controller
@@ -91,6 +92,12 @@ class TransactionController extends Controller
 
             // 8. Update Book Status
             $bookAsset->update(['status' => 'borrowed']);
+
+            // 9. STATISTICAL RECORDING: Increment count for call number range
+            $callNumber = $bookAsset->bookTitle->call_number ?? null;
+            if ($callNumber) {
+                MonthlyStatistic::incrementForCallNumber($callNumber);
+            }
 
             return response()->json([
                 'message' => 'Success! Book borrowed.',
@@ -336,5 +343,99 @@ class TransactionController extends Controller
             'message' => 'Fine marked as unpaid',
             'transaction' => $transaction->load(['user', 'bookAsset.bookTitle'])
         ]);
+    }
+    /**
+     * Permanently delete a transaction and its associated deleted book record.
+     */
+    public function forceDelete($id)
+    {
+        $transaction = Transaction::find($id);
+
+        if (!$transaction) {
+            return response()->json(['message' => 'Transaction not found'], 404);
+        }
+
+        // Identify Book Asset (withTrashed because it might be soft deleted)
+        $bookAsset = \App\Models\BookAsset::withTrashed()->find($transaction->book_asset_id);
+        
+        // Capture title ID before deleting asset
+        $bookTitleId = $bookAsset ? $bookAsset->book_title_id : null;
+
+        // Hard Delete Transaction
+        $transaction->delete();
+
+        // Hard Delete Book Asset if it exists
+        if ($bookAsset) {
+            $bookAsset->forceDelete();
+        }
+
+        // Cleanup: If Title is soft-deleted and has no other assets, force delete it too.
+        if ($bookTitleId) {
+            $bookTitle = \App\Models\BookTitle::withTrashed()->find($bookTitleId);
+            if ($bookTitle && $bookTitle->trashed()) {
+                 $otherAssetsCount = \App\Models\BookAsset::withTrashed()
+                    ->where('book_title_id', $bookTitleId)
+                    ->count();
+                 
+                 // If no assets left (logic: we just force deleted one, count is strictly remaining ones), 
+                 // but wait, count() runs against DB. We just deleted one from DB.
+                 // So if count is 0, we are safe to delete title.
+                 if ($otherAssetsCount === 0) {
+                     $bookTitle->forceDelete();
+                 }
+            }
+        }
+
+        return response()->json(['message' => 'Record permanently deleted']);
+    }
+
+    /**
+     * Bulk permanently delete transactions.
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function forceDeleteBulk(Request $request)
+    {
+        $request->validate([
+            'ids' => 'required|array',
+            'ids.*' => 'exists:transactions,id'
+        ]);
+
+        $ids = $request->ids;
+        $count = 0;
+
+        foreach ($ids as $id) {
+            // Re-use the logic from forceDelete, but optimized or just called directly.
+            // Since trait logic is inside the method, let's extract or just repeat for safety/simplicity in this context.
+            
+            $transaction = Transaction::find($id);
+            if (!$transaction) continue;
+
+            $bookAsset = \App\Models\BookAsset::withTrashed()->find($transaction->book_asset_id);
+            $bookTitleId = $bookAsset ? $bookAsset->book_title_id : null;
+
+            $transaction->delete();
+
+            if ($bookAsset) {
+                $bookAsset->forceDelete();
+            }
+
+            if ($bookTitleId) {
+                $bookTitle = \App\Models\BookTitle::withTrashed()->find($bookTitleId);
+                if ($bookTitle && $bookTitle->trashed()) {
+                     $otherAssetsCount = \App\Models\BookAsset::withTrashed()
+                        ->where('book_title_id', $bookTitleId)
+                        ->count();
+                     
+                     if ($otherAssetsCount === 0) {
+                         $bookTitle->forceDelete();
+                     }
+                }
+            }
+            $count++;
+        }
+
+        return response()->json(['message' => "{$count} records permanently deleted"]);
     }
 }

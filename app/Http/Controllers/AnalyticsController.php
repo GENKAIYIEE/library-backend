@@ -40,17 +40,11 @@ class AnalyticsController extends Controller
      */
     public function categoryPopularity()
     {
-        // Join Transactions -> Book Assets -> Book Titles to get Category
-        $categories = Transaction::join('book_assets', 'transactions.book_asset_id', '=', 'book_assets.id')
-            ->join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
-            ->select('book_titles.category', DB::raw('count(*) as total'))
-            ->groupBy('book_titles.category')
+        // Show distribution of book titles by category (Inventory)
+        $categories = \App\Models\BookTitle::select('category', DB::raw('count(*) as total'))
+            ->groupBy('category')
             ->orderByDesc('total')
-            ->limit(5) // Top 5 categories
             ->get();
-
-        // If fewer than 5, we show what we have. 
-        // We might want to group "Others" if we had many, but Top 5 is good.
 
         return response()->json([
             'labels' => $categories->pluck('category'),

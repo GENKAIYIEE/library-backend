@@ -62,7 +62,7 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/books/random-barcode', [BookController::class, 'generateRandomBarcode']);
     Route::get('/books/lost', [BookController::class, 'getLostBooks']); // NEW
     Route::post('/books/assets/{id}/restore', [BookController::class, 'restoreBook']); // NEW
-    
+
     // Damaged Book Management
     Route::get('/books/damaged', [BookController::class, 'getDamagedBooks']);
     Route::post('/books/assets/{id}/mark-damaged', [BookController::class, 'markAsDamaged']);
@@ -132,9 +132,34 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/reports/statistics', [ReportController::class, 'statistics']);
     Route::get('/reports/demographics', [ReportController::class, 'demographics']);
     Route::get('/reports/export/{type}', [ReportController::class, 'exportCsv']);
+    Route::get('/reports/faculty-statistics', [ReportController::class, 'facultyStatistics']);
 
     // User Management (Admin Only)
     Route::get('/users', [UserController::class, 'index']);
     Route::post('/users', [UserController::class, 'store']);
     Route::post('/users/check-unique', [UserController::class, 'checkUnique']);
+
+    // ========================================
+    // FACULTY MANAGEMENT
+    // ========================================
+    Route::get('/faculties', [App\Http\Controllers\FacultyController::class, 'index']);
+    Route::post('/faculties', [App\Http\Controllers\FacultyController::class, 'store']);
+    Route::get('/faculties/search', [App\Http\Controllers\FacultyController::class, 'search']);
+    Route::get('/faculties/departments/summary', [App\Http\Controllers\FacultyController::class, 'getDepartmentSummary']);
+    Route::get('/faculties/by-department/{department}', [App\Http\Controllers\FacultyController::class, 'getFacultiesByDepartment'])->where('department', '.*');
+    Route::get('/faculties/{id}', [App\Http\Controllers\FacultyController::class, 'show']);
+    Route::put('/faculties/{id}', [App\Http\Controllers\FacultyController::class, 'update']);
+    Route::delete('/faculties/{id}', [App\Http\Controllers\FacultyController::class, 'destroy']);
+    Route::get('/faculties/{id}/history', [App\Http\Controllers\FacultyController::class, 'history']);
+    Route::get('/faculties/{id}/fines', [App\Http\Controllers\FacultyTransactionController::class, 'getFacultyFines']);
+
+    // ========================================
+    // FACULTY CIRCULATION
+    // ========================================
+    Route::post('/faculty/borrow', [App\Http\Controllers\FacultyTransactionController::class, 'borrow']);
+    Route::post('/faculty/return', [App\Http\Controllers\FacultyTransactionController::class, 'returnBook']);
+    Route::get('/faculty/borrowed', [App\Http\Controllers\FacultyTransactionController::class, 'getBorrowedBooks']);
+    Route::get('/faculty/transactions', [App\Http\Controllers\FacultyTransactionController::class, 'index']);
+    Route::post('/faculty/transactions/{id}/pay', [App\Http\Controllers\FacultyTransactionController::class, 'markAsPaid']);
+    Route::post('/faculty/transactions/{id}/waive', [App\Http\Controllers\FacultyTransactionController::class, 'waiveFine']);
 });

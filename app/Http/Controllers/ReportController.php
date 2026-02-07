@@ -413,9 +413,9 @@ class ReportController extends Controller
             $currentYear = (int) date('Y');
             $currentMonth = (int) date('n');
             $defaultYear = ($currentMonth < 6) ? $currentYear - 1 : $currentYear;
-            
+
             $year = (int) $request->input('year', $defaultYear);
-            
+
             // Ranges: 000-099, 100-199, ... 900-999
             $ranges = [];
             for ($i = 0; $i < 10; $i++) {
@@ -426,7 +426,7 @@ class ReportController extends Controller
 
             // Months order: June(6) to Dec(12), Jan(1) to May(5)
             $months = [6, 7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5];
-            
+
             // Initialize matrix
             $matrix = [];
             foreach ($ranges as $range) {
@@ -441,13 +441,13 @@ class ReportController extends Controller
                 // June to December of the start year
                 $query->where(function ($q) use ($year) {
                     $q->where('year', $year)
-                      ->whereIn('month', [6, 7, 8, 9, 10, 11, 12]);
+                        ->whereIn('month', [6, 7, 8, 9, 10, 11, 12]);
                 })
-                // January to May of the next year
-                ->orWhere(function ($q) use ($year) {
-                    $q->where('year', $year + 1)
-                      ->whereIn('month', [1, 2, 3, 4, 5]);
-                });
+                    // January to May of the next year
+                    ->orWhere(function ($q) use ($year) {
+                        $q->where('year', $year + 1)
+                            ->whereIn('month', [1, 2, 3, 4, 5]);
+                    });
             })->get();
 
             // Populate matrix with data
@@ -475,5 +475,97 @@ class ReportController extends Controller
                 'data' => []
             ], 500);
         }
+    }
+
+    /**
+     * Get Faculty Borrowed Books Statistics
+     * Statistics for books borrowed by faculty members
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function facultyStatistics(Request $request)
+    {
+        $year = $request->input('year', date('Y'));
+
+        // Total faculty borrowed books
+        $totalBorrowed = \App\Models\FacultyTransaction::whereYear('borrowed_at', $year)->count();
+
+        // Currently borrowed (active loans)
+        $activeBorrowed = \App\Models\FacultyTransaction::whereNull('returned_at')->count();
+
+        // Overdue books
+        $overdue = \App\Models\FacultyTransaction::whereNull('returned_at')
+            ->where('due_date', '<', now())
+            ->count();
+
+        // Total fines collected
+        $totalFines = \App\Models\FacultyTransaction::whereYear('borrowed_at', $year)
+            ->where('payment_status', 'paid')
+            ->sum('penalty_amount');
+
+        // Pending fines
+        $pendingFines = \App\Models\FacultyTransaction::where('payment_status', 'pending')
+            ->sum('penalty_amount');
+
+        // Monthly breakdown
+        $monthlyData = \App\Models\FacultyTransaction::whereYear('borrowed_at', $year)
+            ->select(
+                DB::raw('MONTH(borrowed_at) as month'),
+                DB::raw('COUNT(*) as count')
+            )
+            ->groupBy(DB::raw('MONTH(borrowed_at)'))
+            ->orderBy('month')
+            ->get()
+            ->keyBy('month');
+
+        $months = [];
+        for ($i = 1; $i <= 12; $i++) {
+            $months[] = [
+                'month' => $i,
+                'name' => date('M', mktime(0, 0, 0, $i, 1)),
+                'count' => $monthlyData->get($i)?->count ?? 0
+            ];
+        }
+
+        // By Department
+        $byDepartment = \App\Models\FacultyTransaction::join('faculties', 'faculty_transactions.faculty_id', '=', 'faculties.id')
+            ->whereYear('borrowed_at', $year)
+            ->select(
+                'faculties.department',
+                DB::raw('COUNT(*) as count')
+            )
+            ->groupBy('faculties.department')
+            ->orderByDesc('count')
+            ->get();
+
+        // Top Faculty Borrowers
+        $topBorrowers = \App\Models\FacultyTransaction::join('faculties', 'faculty_transactions.faculty_id', '=', 'faculties.id')
+            ->whereYear('borrowed_at', $year)
+            ->select(
+                'faculties.id',
+                'faculties.name',
+                'faculties.faculty_id',
+                'faculties.department',
+                DB::raw('COUNT(*) as borrow_count')
+            )
+            ->groupBy('faculties.id', 'faculties.name', 'faculties.faculty_id', 'faculties.department')
+            ->orderByDesc('borrow_count')
+            ->limit(10)
+            ->get();
+
+        return response()->json([
+            'year' => (int) $year,
+            'summary' => [
+                'total_borrowed' => $totalBorrowed,
+                'active_borrowed' => $activeBorrowed,
+                'overdue' => $overdue,
+                'total_fines_collected' => (float) $totalFines,
+                'pending_fines' => (float) $pendingFines,
+            ],
+            'monthly' => $months,
+            'by_department' => $byDepartment,
+            'top_borrowers' => $topBorrowers
+        ]);
     }
 }

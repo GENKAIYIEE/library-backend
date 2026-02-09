@@ -9,6 +9,7 @@ use App\Http\Controllers\ReportController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\SettingController;
+use App\Models\User;
 
 /*
 |--------------------------------------------------------------------------
@@ -16,6 +17,9 @@ use App\Http\Controllers\SettingController;
 |--------------------------------------------------------------------------
 */
 Route::post('/login', [AuthController::class, 'login']);
+Route::post('/forgot-password/send-otp', [App\Http\Controllers\ForgotPasswordController::class, 'sendOtp']);
+Route::post('/forgot-password/verify-otp', [App\Http\Controllers\ForgotPasswordController::class, 'verifyOtp']);
+Route::post('/forgot-password/reset', [App\Http\Controllers\ForgotPasswordController::class, 'resetPassword']);
 Route::get('/books', [BookController::class, 'index']);
 Route::get('/books/search/{keyword}', [BookController::class, 'search']);
 Route::get('/books/available', [BookController::class, 'getAvailableBooks']);
@@ -23,6 +27,10 @@ Route::get('/books/borrowed', [BookController::class, 'getBorrowedBooks']);
 Route::get('/books/lookup/{barcode}', [BookController::class, 'lookup']);
 Route::get('/books/lookup-isbn/{isbn}', [BookController::class, 'lookupIsbn']);
 Route::get('/students/{studentId}/clearance', [BookController::class, 'checkClearance']);
+
+
+// DEBUG ROUTE
+require __DIR__ . '/debug_unique.php';
 
 // Public Settings (for circulation display)
 Route::get('/settings/circulation', [SettingController::class, 'circulation']);
@@ -137,6 +145,8 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     // User Management (Admin Only)
     Route::get('/users', [UserController::class, 'index']);
     Route::post('/users', [UserController::class, 'store']);
+    Route::put('/users/{id}', [UserController::class, 'update']);
+    Route::delete('/users/{id}', [UserController::class, 'destroy']);
     Route::post('/users/check-unique', [UserController::class, 'checkUnique']);
 
     // ========================================

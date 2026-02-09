@@ -1,0 +1,110 @@
+Field: email, Value: kouseikou13@gmail.com
+SQL: select * from `users` where `email` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["kouseikou13@gmail.com"]
+Exists: YES
+----------------
+Field: username, Value: admin@library.com
+SQL: select * from `users` where `username` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["admin@library.com"]
+Exists: NO
+----------------
+Field: email, Value: xanthosis122@gmail.com
+SQL: select * from `users` where `email` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["xanthosis122@gmail.com"]
+Exists: YES
+----------------
+Field: username, Value: admin@library.com
+SQL: select * from `users` where `username` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["admin@library.com"]
+Exists: NO
+----------------
+Field: username, Value: Mike
+SQL: select * from `users` where `username` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["Mike"]
+Exists: NO
+----------------
+Field: email, Value: xanthosis122@gmail.com
+SQL: select * from `users` where `email` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["xanthosis122@gmail.com"]
+Exists: YES
+----------------
+Field: email, Value: xanthosis122@gmail.com
+SQL: select * from `users` where `email` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["xanthosis122@gmail.com"]
+Exists: YES
+----------------
+Field: username, Value: Mike
+SQL: select * from `users` where `username` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["Mike"]
+Exists: NO
+----------------
+Field: email, Value: xanthosis122@gmail.com
+SQL: select * from `users` where `email` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["xanthosis122@gmail.com"]
+Exists: YES
+----------------
+Field: username, Value: Mike
+SQL: select * from `users` where `username` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["Mike"]
+Exists: NO
+----------------
+Field: username, Value: kouseikou13@gmail.com
+SQL: select * from `users` where `username` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["kouseikou13@gmail.com"]
+Exists: NO
+----------------
+Field: email, Value: kouseikou13@gmail.com
+SQL: select * from `users` where `email` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["kouseikou13@gmail.com"]
+Exists: YES
+----------------
+Field: username, Value: kouseikou13@gmail.com
+SQL: select * from `users` where `username` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["kouseikou13@gmail.com"]
+Exists: NO
+----------------
+Field: email, Value: lomkiced@gmail.com
+SQL: select * from `users` where `email` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["lomkiced@gmail.com"]
+Exists: NO
+----------------
+Field: username, Value: admin@library.com
+SQL: select * from `users` where `username` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["admin@library.com"]
+Exists: NO
+----------------
+Field: username, Value: lomkiced@gmail.com
+SQL: select * from `users` where `username` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["lomkiced@gmail.com"]
+Exists: NO
+----------------
+Field: email, Value: lomkiced@gmail.com
+SQL: select * from `users` where `email` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["lomkiced@gmail.com"]
+Exists: NO
+----------------
+Field: username, Value: lomkiced@gmail.com
+SQL: select * from `users` where `username` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["lomkiced@gmail.com"]
+Exists: NO
+----------------
+Field: email, Value: johnvincentjoaquin34@gmail.com
+SQL: select * from `users` where `email` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["johnvincentjoaquin34@gmail.com"]
+Exists: NO
+----------------
+Field: username, Value: johnvincentjoaquin34@gmail.com
+SQL: select * from `users` where `username` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["johnvincentjoaquin34@gmail.com"]
+Exists: NO
+----------------
+Field: email, Value: johnvincentjoaquin34@gmail.com
+SQL: select * from `users` where `email` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["johnvincentjoaquin34@gmail.com"]
+Exists: NO
+----------------
+Field: username, Value: johnvincentjoaquin34@gmail.com
+SQL: select * from `users` where `username` = ? and `deleted_at` is null and `users`.`deleted_at` is null
+Bindings: ["johnvincentjoaquin34@gmail.com"]
+Exists: NO
+----------------

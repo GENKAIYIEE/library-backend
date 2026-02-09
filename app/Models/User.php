@@ -29,6 +29,8 @@ class User extends Authenticatable
         'year_level',
         'section',
         'profile_picture', // Added
+        'otp_code',
+        'otp_expires_at',
     ];
 
     /**
@@ -37,6 +39,7 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        'otp_code', // Hide OTP from array/JSON serialization
     ];
 
     /**
@@ -49,6 +52,7 @@ class User extends Authenticatable
      */
     protected $casts = [
         'email_verified_at' => 'datetime',
+        'otp_expires_at' => 'datetime',
     ];
 
     /**

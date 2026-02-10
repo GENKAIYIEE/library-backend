@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use App\Models\Transaction;
 use App\Models\BookTitle;
 use App\Models\User;
+use App\Models\MonthlyFinancialRecord;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -416,13 +417,24 @@ class ReportController extends Controller
 
             $year = (int) $request->input('year', $defaultYear);
 
-            // Ranges: 000-099, 100-199, ... 900-999
-            $ranges = [];
-            for ($i = 0; $i < 10; $i++) {
-                $start = $i * 100;
-                $end = $start + 99;
-                $ranges[] = sprintf("%03d-%03d", $start, $end);
+            // Fetch configured ranges
+            $configuredRanges = \App\Models\LibrarySetting::getValue('statistics_ranges', []);
+            
+            // Fallback if empty
+            if (empty($configuredRanges)) {
+                $configuredRanges = [];
+                for ($i = 0; $i < 10; $i++) {
+                    $start = $i * 100;
+                    $configuredRanges[] = [
+                        'start' => $start,
+                        'end' => $start + 99,
+                        'label' => sprintf("%03d-%03d", $start, $start + 99)
+                    ];
+                }
             }
+
+            // Extract labels for frontend
+            $ranges = array_column($configuredRanges, 'label');
 
             // Months order: June(6) to Dec(12), Jan(1) to May(5)
             $months = [6, 7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5];
@@ -450,11 +462,36 @@ class ReportController extends Controller
                     });
             })->get();
 
-            // Populate matrix with data
+            // Populate matrices with data
+            $studentData = [];
+            $facultyData = [];
+
+            // Initialize matrices
+            foreach ($ranges as $range) {
+                foreach ($months as $m) {
+                    $studentData[$range][$m] = 0;
+                    $facultyData[$range][$m] = 0;
+                }
+            }
+
             foreach ($stats as $stat) {
-                $rangeKey = sprintf("%03d-%03d", $stat->range_start, $stat->range_end);
-                if (isset($matrix[$rangeKey][$stat->month])) {
-                    $matrix[$rangeKey][$stat->month] = $stat->count;
+                // Find matching configured range
+                $matchingLabel = null;
+                foreach ($configuredRanges as $conf) {
+                    if ($stat->range_start == $conf['start'] && $stat->range_end == $conf['end']) {
+                        $matchingLabel = $conf['label'];
+                        break;
+                    }
+                }
+
+                // Only process if we found a matching range in current configuration
+                if ($matchingLabel && isset($studentData[$matchingLabel][$stat->month])) {
+                    if ($stat->user_type === 'faculty') {
+                        $facultyData[$matchingLabel][$stat->month] += $stat->count;
+                    } else {
+                        // Default to student for 'student' or null (old data)
+                        $studentData[$matchingLabel][$stat->month] += $stat->count;
+                    }
                 }
             }
 
@@ -463,7 +500,8 @@ class ReportController extends Controller
                 'academic_year' => "A.Y. $year-" . ($year + 1),
                 'ranges' => $ranges,
                 'months' => $months,
-                'data' => $matrix
+                'student_data' => $studentData,
+                'faculty_data' => $facultyData
             ]);
         } catch (\Exception $e) {
             \Log::error('Statistics endpoint error: ' . $e->getMessage());
@@ -567,5 +605,95 @@ class ReportController extends Controller
             'by_department' => $byDepartment,
             'top_borrowers' => $topBorrowers
         ]);
+    }
+
+    /**
+     * Get Current Month Financial Data (Real-time)
+     * 
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function financialCurrent()
+    {
+        $current = MonthlyFinancialRecord::getCurrentMonth();
+
+        return response()->json([
+            'year' => $current->year,
+            'month' => $current->month,
+            'month_name' => $current->month_name,
+            'total_fines' => (float) $current->total_fines,
+            'total_collected' => (float) $current->total_collected,
+            'total_pending' => (float) $current->total_pending,
+            'late_returns' => (int) $current->late_returns,
+            'is_finalized' => $current->is_finalized,
+        ]);
+    }
+
+    /**
+     * Get Financial History (Monthly Records)
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function financialHistory(Request $request)
+    {
+        $limit = $request->input('limit', 12);
+        $year = $request->input('year');
+
+        // Recalculate all months that have transaction data
+        $this->syncFinancialRecords();
+
+        $query = MonthlyFinancialRecord::orderByDesc('year')
+            ->orderByDesc('month');
+
+        if ($year) {
+            $query->where('year', $year);
+        }
+
+        $records = $query->limit($limit)->get();
+
+        // Calculate grand totals
+        $totals = [
+            'total_fines' => $records->sum('total_fines'),
+            'total_collected' => $records->sum('total_collected'),
+            'total_pending' => $records->sum('total_pending'),
+            'total_late_returns' => $records->sum('late_returns'),
+        ];
+
+        return response()->json([
+            'records' => $records->map(function ($record) {
+                return [
+                    'id' => $record->id,
+                    'year' => $record->year,
+                    'month' => $record->month,
+                    'month_name' => $record->month_name,
+                    'period' => sprintf('%s %d', $record->month_name, $record->year),
+                    'total_fines' => (float) $record->total_fines,
+                    'total_collected' => (float) $record->total_collected,
+                    'total_pending' => (float) $record->total_pending,
+                    'late_returns' => (int) $record->late_returns,
+                    'is_finalized' => $record->is_finalized,
+                    'finalized_at' => $record->finalized_at,
+                ];
+            }),
+            'totals' => $totals,
+        ]);
+    }
+
+    /**
+     * Sync financial records from transactions
+     * Creates/updates records for all months that have transaction data
+     */
+    private function syncFinancialRecords()
+    {
+        // Get all distinct months that have transactions
+        $months = Transaction::query()
+            ->whereNotNull('returned_at')
+            ->selectRaw('YEAR(returned_at) as year, MONTH(returned_at) as month')
+            ->groupBy(DB::raw('YEAR(returned_at), MONTH(returned_at)'))
+            ->get();
+
+        foreach ($months as $m) {
+            MonthlyFinancialRecord::recalculateForMonth($m->year, $m->month);
+        }
     }
 }

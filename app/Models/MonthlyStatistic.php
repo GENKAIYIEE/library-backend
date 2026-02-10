@@ -15,7 +15,8 @@ class MonthlyStatistic extends Model
         'month',
         'range_start',
         'range_end',
-        'count'
+        'count',
+        'user_type'
     ];
 
     protected $casts = [
@@ -32,10 +33,11 @@ class MonthlyStatistic extends Model
      * Example: Call Number "243" → Range 200-299 → Increment count for current month
      *
      * @param string $callNumber The book's call number
+     * @param string $userType 'student' or 'faculty'
      * @param Carbon|null $date Optional date (defaults to now)
      * @return bool Success status
      */
-    public static function incrementForCallNumber(string $callNumber, ?Carbon $date = null): bool
+    public static function incrementForCallNumber(string $callNumber, string $userType = 'student', ?Carbon $date = null): bool
     {
         // Parse the call number to extract the numeric portion
         if (!preg_match('/^(\d{1,3})/', trim($callNumber), $matches)) {
@@ -45,14 +47,34 @@ class MonthlyStatistic extends Model
 
         $number = (int) $matches[1];
         
-        // Ensure it's within valid Dewey range (0-999)
-        if ($number < 0 || $number > 999) {
-            return false;
+        // Fetch configured ranges
+        $ranges = \App\Models\LibrarySetting::getValue('statistics_ranges', []);
+        
+        // Default fallbacks if settings empty
+        if (empty($ranges)) {
+            for ($i = 0; $i < 10; $i++) {
+                $start = $i * 100;
+                $ranges[] = ['start' => $start, 'end' => $start + 99];
+            }
         }
 
-        // Calculate range: 243 → range_start=200, range_end=299
-        $rangeStart = (int) floor($number / 100) * 100;
-        $rangeEnd = $rangeStart + 99;
+        $rangeStart = null;
+        $rangeEnd = null;
+
+        // Find matching range
+        foreach ($ranges as $range) {
+            if ($number >= $range['start'] && $number <= $range['end']) {
+                $rangeStart = $range['start'];
+                $rangeEnd = $range['end'];
+                break;
+            }
+        }
+
+        // If no range found (e.g. out of bounds), ignore or use a default "Uncategorized" bucket
+        // For now, we return false to skip recording
+        if ($rangeStart === null) {
+            return false;
+        }
 
         // Get current date
         $date = $date ?? Carbon::now();
@@ -65,6 +87,7 @@ class MonthlyStatistic extends Model
                 'year' => $year,
                 'month' => $month,
                 'range_start' => $rangeStart,
+                'user_type' => $userType
             ],
             [
                 'range_end' => $rangeEnd,
@@ -74,40 +97,8 @@ class MonthlyStatistic extends Model
 
         $stat->increment('count');
 
-        \Log::info("MonthlyStatistic: Call Number '{$callNumber}' → Range {$rangeStart}-{$rangeEnd}, Month {$month}/{$year}, New Count: " . ($stat->count));
+        \Log::info("MonthlyStatistic: [{$userType}] Call Number '{$callNumber}' → Range {$rangeStart}-{$rangeEnd}, Month {$month}/{$year}, New Count: " . ($stat->count));
 
         return true;
-    }
-
-    /**
-     * Get statistics for a specific year, organized by month and range
-     */
-    public static function getYearlyStats(int $year): array
-    {
-        $stats = self::where('year', $year)->get();
-
-        $matrix = [];
-        $ranges = [
-            [0, 99], [100, 199], [200, 299], [300, 399], [400, 499],
-            [500, 599], [600, 699], [700, 799], [800, 899], [900, 999]
-        ];
-
-        // Initialize matrix
-        foreach ($ranges as [$start, $end]) {
-            $rangeKey = "{$start}-{$end}";
-            for ($m = 1; $m <= 12; $m++) {
-                $matrix[$rangeKey][$m] = 0;
-            }
-        }
-
-        // Populate with actual data
-        foreach ($stats as $stat) {
-            $rangeKey = "{$stat->range_start}-{$stat->range_end}";
-            if (isset($matrix[$rangeKey])) {
-                $matrix[$rangeKey][$stat->month] = $stat->count;
-            }
-        }
-
-        return $matrix;
     }
 }

@@ -157,33 +157,7 @@ public function index()
     // 3. CREATE NEW BOOK TITLE (Admin Only)
     public function storeTitle(StoreBookTitleRequest $request)
     {
-        $fields = $request->validate([
-            'title' => 'required|string|max:255',
-            'subtitle' => 'nullable|string|max:255',
-            'author' => 'required|string|max:255',
-            'category' => 'required|string|max:100',
-            'isbn' => 'nullable|string|max:50',
-            'lccn' => 'nullable|string|max:50',
-            'issn' => 'nullable|string|max:50',
-            'publisher' => 'nullable|string|max:255',
-            'place_of_publication' => 'nullable|string|max:255',
-            'published_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
-            'copyright_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
-            'call_number' => 'nullable|string|max:100',
-            'physical_description' => 'nullable|string',
-            'pages' => 'nullable|integer|min:1',
-            'edition' => 'nullable|string|max:50',
-            'series' => 'nullable|string|max:255',
-            'volume' => 'nullable|string|max:50',
-            'price' => 'nullable|numeric|min:0',
-            'book_penalty' => 'nullable|numeric|min:0',
-            'language' => 'nullable|string|max:50',
-            'description' => 'nullable|string',
-            'location' => 'nullable|string|max:255',
-            'copies' => 'nullable|integer|min:1|max:100',
-            'accession_no' => 'nullable|string|max:50', // Renamed from accession_number to match table
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120' // 5MB max
-        ]);
+        $fields = $request->validated();
 
         // Case-insensitive duplicate title check
         $existingBook = BookTitle::whereRaw('LOWER(title) = ?', [strtolower($fields['title'])])->first();
@@ -260,25 +234,49 @@ public function index()
             $initialStatus = $request->boolean('is_damaged') ? 'damaged' : 'available';
 
             for ($i = 0; $i < $copies; $i++) {
-                if ($i === 0 && $baseAccession && !BookAsset::where('asset_code', $baseAccession)->exists()) {
-                    // Use the provided accession number for the first copy
-                    $assetCode = $baseAccession;
-                } else {
-                    // Generate sequential asset code for additional copies
-                    $assetCode = $this->generateAssetBarcode();
-                }
+                if ($baseAccession) {
+                    // Smart Increment Logic for Accession Number
+                    if ($i === 0) {
+                        $assetCode = $baseAccession;
+                    } else {
+                        // Try to increment the last number found in the string
+                        if (preg_match('/^(.*?)(\d+)$/', $baseAccession, $matches)) {
+                            $prefix = $matches[1];
+                            $number = $matches[2];
+                            $length = strlen($number);
+                            $newNumber = (int)$number + $i;
+                            $assetCode = $prefix . str_pad($newNumber, $length, '0', STR_PAD_LEFT);
+                        } else {
+                            // If no number to increment, append -Sequence
+                            $assetCode = $baseAccession . '-' . ($i + 1);
+                        }
+                    }
 
-                // Ensure uniqueness
-                while (BookAsset::where('asset_code', $assetCode)->exists()) {
+                    // Strict check: If generated accession exists, we must stop or error
+                    // We can't just skip it because it breaks the sequence expected by the user.
+                    if (BookAsset::where('asset_code', $assetCode)->exists()) {
+                         return response()->json([
+                            'message' => "Accession number $assetCode already exists. Please choose a range that is free.",
+                            'errors' => ['accession_no' => ["Sequence collision: $assetCode already exists."]]
+                        ], 422);
+                    }
+
+                } else {
+                    // No Accession Number provided -> Generate sequential asset code (BOOK-YYYY-XXXX)
                     $assetCode = $this->generateAssetBarcode();
+                    
+                    // Generate Unique
+                    while (BookAsset::where('asset_code', $assetCode)->exists()) {
+                        $assetCode = $this->generateAssetBarcode();
+                    }
                 }
 
                 $asset = BookAsset::create([
                     'book_title_id' => $bookTitle->id,
                     'asset_code' => $assetCode,
-                    'building' => null, // Default location from book title
+                    'building' => 'Main Library', // Default building
                     'aisle' => null,
-                    'shelf' => null,
+                    'shelf' => $request->input('location'), // Map location input to shelf
                     'status' => $initialStatus
                 ]);
                 $createdAssets[] = $asset;
@@ -308,13 +306,27 @@ public function index()
             'book_title_id' => 'required|exists:book_titles,id',
             'building' => 'nullable|string',
             'aisle' => 'nullable|string',
-            'shelf' => 'nullable|string'
+            'shelf' => 'nullable|string',
+            'accession_no' => 'nullable|string|unique:book_assets,asset_code' // Allow manual entry
         ]);
 
-        // Auto-generate the asset barcode
-        $assetCode = $this->generateAssetBarcode();
+        // Use provided accession number or auto-generate
+        if (!empty($fields['accession_no'])) {
+            $assetCode = $fields['accession_no'];
+        } else {
+            // Auto-generate the asset barcode
+            $assetCode = $this->generateAssetBarcode();
+            // Ensure uniqueness for auto-generated code
+            while (BookAsset::where('asset_code', $assetCode)->exists()) {
+                $assetCode = $this->generateAssetBarcode();
+            }
+        }
+
         $fields['asset_code'] = $assetCode;
         $fields['status'] = 'available';
+
+        // Remove accession_no from fields as it's not a column
+        unset($fields['accession_no']);
 
         return BookAsset::create($fields);
     }
@@ -523,6 +535,10 @@ public function index()
     {
         $borrowedBooks = BookAsset::where('status', 'borrowed')
             ->whereHas('bookTitle') // Only include assets with non-deleted book titles
+            // FIX: Only include books that have an active STUDENT transaction
+            ->whereHas('transactions', function ($query) {
+                $query->whereNull('returned_at');
+            })
             ->with(['bookTitle:id,title,author,image_path'])
             ->orderBy('asset_code')
             ->get()
@@ -572,6 +588,30 @@ public function index()
         $loanDays = LibrarySetting::getDefaultLoanDays();
         $finePerDay = LibrarySetting::getFinePerDay();
 
+        // Check if student has any lost books that are still pending payment
+        $hasLostBooks = \App\Models\Transaction::where('user_id', $student->id)
+            ->where('payment_status', 'pending')
+            ->where('penalty_amount', '>', 0)
+            ->whereHas('bookAsset', function($q) {
+                $q->where('status', 'lost');
+            })
+            ->exists();
+
+        // Calculate clearance first
+        $isCleared = $pendingFines == 0 && $activeLoans < $maxLoans && !$hasLostBooks;
+
+        // Only set block_reason if student is NOT cleared
+        $blockReason = null;
+        if (!$isCleared) {
+            if ($hasLostBooks) {
+                $blockReason = 'Student has a LOST BOOK pending payment.';
+            } elseif ($pendingFines > 0) {
+                $blockReason = 'Pending fines: ₱' . number_format($pendingFines, 2);
+            } elseif ($activeLoans >= $maxLoans) {
+                $blockReason = "Max {$maxLoans} books reached";
+            }
+        }
+
         return response()->json([
             'student_id' => $student->student_id,
             'name' => $student->name,
@@ -583,9 +623,8 @@ public function index()
             'max_loans' => $maxLoans,
             'loan_days' => $loanDays,
             'fine_per_day' => $finePerDay,
-            'is_cleared' => $pendingFines == 0 && $activeLoans < $maxLoans,
-            'block_reason' => $pendingFines > 0 ? 'Pending fines: ₱' . number_format($pendingFines, 2) :
-                ($activeLoans >= $maxLoans ? "Max {$maxLoans} books reached" : null)
+            'is_cleared' => $isCleared,
+            'block_reason' => $blockReason
         ]);
     }
 
@@ -767,9 +806,7 @@ public function index()
     {
         $lostAssets = BookAsset::with([
             'bookTitle',
-            'transactions' => function ($q) {
-                $q->latest()->limit(1); // Get the transaction that marked it lost
-            }
+            'latestTransaction.user' // Properly eager load the single latest transaction with its user
         ])
             ->where('status', 'lost')
             ->get();
@@ -789,11 +826,18 @@ public function index()
             return response()->json(['message' => 'Book copy not found'], 404);
         }
 
+        if ($asset->status !== 'lost') {
+            return response()->json(['message' => 'Book is not marked as lost.'], 400);
+        }
+
         // Check for unpaid fines associated with this asset
         $latestTransaction = $asset->transactions()->latest()->first();
 
         // If there is a transaction with a penalty that hasn't been paid/waived
-        if ($latestTransaction && $latestTransaction->penalty_amount > 0 && $latestTransaction->payment_status === 'pending') {
+        // STRICT CHECK: The PAYMENT STATUS must be 'paid' or 'waived'
+        if ($latestTransaction && $latestTransaction->penalty_amount > 0 && 
+            !in_array($latestTransaction->payment_status, ['paid', 'waived'])) {
+            
             return response()->json([
                 'message' => 'Cannot restore book. The lost book fine must be settled first.',
                 'error' => 'unpaid_fine',

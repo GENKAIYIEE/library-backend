@@ -96,7 +96,7 @@ class TransactionController extends Controller
             // 9. STATISTICAL RECORDING: Increment count for call number range
             $callNumber = $bookAsset->bookTitle->call_number ?? null;
             if ($callNumber) {
-                MonthlyStatistic::incrementForCallNumber($callNumber);
+                MonthlyStatistic::incrementForCallNumber($callNumber, 'student');
             }
 
             return response()->json([

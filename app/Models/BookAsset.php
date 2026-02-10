@@ -29,4 +29,11 @@ class BookAsset extends Model
     {
         return $this->hasMany(Transaction::class);
     }
+
+    // Use hasOne combined with latest() to strictly get the single most recent transaction per asset
+    // efficient for eager loading
+    public function latestTransaction()
+    {
+        return $this->hasOne(Transaction::class)->latest('id');
+    }
 }

@@ -114,10 +114,14 @@ class SettingController extends Controller
 
             // Validate required settings
             $validator = Validator::make($settings, [
+                // Student settings
                 'default_loan_days' => 'sometimes|integer|min:1|max:365',
                 'max_loans_per_student' => 'sometimes|integer|min:1|max:20',
                 'fine_per_day' => 'sometimes|numeric|min:0|max:1000',
-                'library_name' => 'sometimes|string|max:255'
+                'library_name' => 'sometimes|string|max:255',
+                // Faculty settings
+                'faculty_loan_days' => 'sometimes|integer|min:1|max:365',
+                'max_loans_per_faculty' => 'sometimes|integer|min:1|max:20'
             ]);
 
             if ($validator->fails()) {

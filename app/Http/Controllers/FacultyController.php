@@ -190,7 +190,6 @@ class FacultyController extends Controller
             $faculty->total_borrowed = $faculty->transactions()->count();
             $faculty->active_loans = $faculty->activeLoans()->count();
             $faculty->overdue = $faculty->has_overdue;
-            $faculty->fines = $faculty->pending_fines;
         }
 
         return response()->json($faculties);
@@ -230,8 +229,6 @@ class FacultyController extends Controller
             'stats' => [
                 'total_borrowed' => $transactions->count(),
                 'active_loans' => $transactions->whereNull('returned_at')->count(),
-                'total_fines' => $transactions->sum('penalty_amount'),
-                'pending_fines' => $transactions->where('payment_status', 'pending')->sum('penalty_amount'),
             ]
         ]);
     }
@@ -286,7 +283,6 @@ class FacultyController extends Controller
             'status' => $faculty->status,
             'active_loans' => $faculty->activeLoans()->count(),
             'total_borrowed' => $faculty->transactions()->count(),
-            'pending_fines' => $faculty->pending_fines,
             'has_overdue' => $faculty->has_overdue,
         ]);
     }

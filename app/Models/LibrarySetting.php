@@ -191,6 +191,26 @@ class LibrarySetting extends Model
     }
 
     /**
+     * Get faculty loan days
+     * 
+     * @return int
+     */
+    public static function getFacultyLoanDays(): int
+    {
+        return (int) self::getValue('faculty_loan_days', 14);
+    }
+
+    /**
+     * Get max loans per faculty
+     * 
+     * @return int
+     */
+    public static function getMaxLoansPerFaculty(): int
+    {
+        return (int) self::getValue('max_loans_per_faculty', 5);
+    }
+
+    /**
      * Clear all settings cache
      */
     public static function clearCache(): void

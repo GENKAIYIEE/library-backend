@@ -28,14 +28,14 @@ class StoreBookTitleRequest extends FormRequest
             'author' => 'required|string|max:255',
             'category' => 'required|string|max:100',
             'isbn' => 'nullable|string|max:50',
-            'accession_no' => 'nullable|string|max:100',
+            'accession_no' => 'nullable|string|max:100|unique:book_titles,accession_no',
             'lccn' => 'nullable|string|max:50',
             'issn' => 'nullable|string|max:50',
             'publisher' => 'nullable|string|max:255',
             'place_of_publication' => 'nullable|string|max:255',
             'published_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
             'copyright_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
-            'call_number' => 'nullable|string|max:100',
+            'call_number' => 'nullable|string|max:100|unique:book_titles,call_number',
             'pages' => 'nullable|integer|min:1',
             'physical_description' => 'nullable|string|max:255',
             'edition' => 'nullable|string|max:100',
@@ -46,9 +46,21 @@ class StoreBookTitleRequest extends FormRequest
             'language' => 'nullable|string|max:50',
             'description' => 'nullable|string',
             'location' => 'nullable|string|max:255',
-            'copies' => 'nullable|integer|min:1|max:100',
-            'accession_number' => 'nullable|string|max:50',
+            'copies' => 'nullable|integer|min:1|max:100', // Restored missing field
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120' // 5MB max
+        ];
+    }
+
+    /**
+     * Get custom messages for validator errors.
+     *
+     * @return array
+     */
+    public function messages()
+    {
+        return [
+            'accession_no.unique' => 'This accession number is now existing, try new one.',
+            'call_number.unique' => 'This call number is already existing, try a new one.',
         ];
     }
 }

@@ -13,11 +13,11 @@ use Carbon\Carbon;
 class FacultyTransactionController extends Controller
 {
     /**
-     * Get loan days from settings (same for all borrowers)
+     * Get loan days for faculty from settings
      */
     private function getLoanDays()
     {
-        return LibrarySetting::getDefaultLoanDays();
+        return LibrarySetting::getFacultyLoanDays();
     }
 
     /**
@@ -25,16 +25,7 @@ class FacultyTransactionController extends Controller
      */
     private function getMaxLoansPerFaculty()
     {
-        // Faculty can have slightly higher limit (5 vs 3 for students)
-        return (int) LibrarySetting::getValue('max_loans_per_faculty', 5);
-    }
-
-    /**
-     * Get fine per day from settings
-     */
-    private function getFinePerDay()
-    {
-        return LibrarySetting::getFinePerDay();
+        return LibrarySetting::getMaxLoansPerFaculty();
     }
 
     /**
@@ -106,14 +97,6 @@ class FacultyTransactionController extends Controller
             ], 422);
         }
 
-        // Check for unpaid fines
-        $pendingFines = $faculty->pending_fines;
-        if ($pendingFines > 0) {
-            return response()->json([
-                'message' => "Faculty has ₱" . number_format($pendingFines, 2) . " in unpaid fines. Please settle before borrowing."
-            ], 422);
-        }
-
         // Calculate due date
         $loanDays = $this->getLoanDays();
         $dueDate = Carbon::now()->addDays($loanDays)->format('Y-m-d');
@@ -126,6 +109,9 @@ class FacultyTransactionController extends Controller
             'due_date' => $dueDate,
             'processed_by' => auth()->id(),
         ]);
+
+        // Update book status to 'borrowed'
+        $bookAsset->update(['status' => 'borrowed']);
 
         // Update monthly statistics for faculty
         $this->updateMonthlyStatistic($bookAsset, 'faculty');
@@ -171,18 +157,10 @@ class FacultyTransactionController extends Controller
             ], 404);
         }
 
-        // Calculate penalty if overdue
+        // Calculate penalty if overdue (Faculty has no penalty)
         $returnDate = now();
-        $dueDate = Carbon::parse($transaction->due_date);
         $penalty = 0;
-        $paymentStatus = null;
-
-        if ($returnDate->gt($dueDate)) {
-            $daysLate = $returnDate->diffInDays($dueDate);
-            $finePerDay = $this->getFinePerDay();
-            $penalty = $daysLate * $finePerDay;
-            $paymentStatus = 'pending';
-        }
+        $paymentStatus = 'paid';
 
         // Update transaction
         $transaction->update([
@@ -190,6 +168,9 @@ class FacultyTransactionController extends Controller
             'penalty_amount' => $penalty,
             'payment_status' => $paymentStatus,
         ]);
+
+        // Update book status back to 'available'
+        $bookAsset->update(['status' => 'available']);
 
         $transaction->load(['bookAsset.bookTitle', 'faculty']);
 
@@ -199,8 +180,8 @@ class FacultyTransactionController extends Controller
             'faculty_name' => $transaction->faculty->name ?? 'Unknown',
             'book_title' => $transaction->bookAsset->bookTitle->title ?? 'Unknown',
             'returned_at' => $returnDate,
-            'days_late' => $penalty > 0 ? $returnDate->diffInDays($dueDate) : 0,
-            'penalty' => $penalty,
+            'days_late' => 0,
+            'penalty' => 0,
         ]);
     }
 
@@ -213,6 +194,10 @@ class FacultyTransactionController extends Controller
             ->with(['faculty', 'bookAsset.bookTitle'])
             ->orderBy('due_date')
             ->get()
+            ->filter(function ($tx) {
+                // Filter out transactions with missing book assets
+                return $tx->bookAsset !== null;
+            })
             ->map(function ($tx) {
                 $isOverdue = Carbon::parse($tx->due_date)->lt(now());
                 return [
@@ -221,14 +206,15 @@ class FacultyTransactionController extends Controller
                     'faculty_name' => $tx->faculty->name ?? 'Unknown',
                     'faculty_code' => $tx->faculty->faculty_id ?? 'N/A',
                     'department' => $tx->faculty->department ?? 'N/A',
-                    'book_title' => $tx->bookAsset->bookTitle->title ?? 'Unknown',
+                    'book_title' => optional($tx->bookAsset->bookTitle)->title ?? 'Unknown',
                     'asset_code' => $tx->bookAsset->asset_code ?? 'N/A',
                     'borrowed_at' => $tx->borrowed_at,
                     'due_date' => $tx->due_date,
                     'is_overdue' => $isOverdue,
                     'days_overdue' => $isOverdue ? now()->diffInDays($tx->due_date) : 0,
                 ];
-            });
+            })
+            ->values(); // Re-index array after filtering
 
         return response()->json($borrowed);
     }
@@ -334,31 +320,6 @@ class FacultyTransactionController extends Controller
             return;
         }
 
-        // Extract the class number from call number
-        $callNumber = $bookTitle->call_number;
-        preg_match('/^(\d{3})/', $callNumber, $matches);
-
-        if (empty($matches)) {
-            return;
-        }
-
-        $classNumber = (int) $matches[1];
-        $rangeStart = floor($classNumber / 100) * 100;
-        $rangeEnd = $rangeStart + 99;
-
-        $year = (int) date('Y');
-        $month = (int) date('n');
-
-        // For faculty, we'll track in a separate field or just use the same statistics
-        // For now, we'll increment the same counter (can be separated later)
-        MonthlyStatistic::updateOrCreate(
-            [
-                'year' => $year,
-                'month' => $month,
-                'range_start' => $rangeStart,
-                'range_end' => $rangeEnd,
-            ],
-            []
-        )->increment('count');
+        MonthlyStatistic::incrementForCallNumber($bookTitle->call_number, 'faculty');
     }
 }

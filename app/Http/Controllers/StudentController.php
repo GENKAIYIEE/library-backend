@@ -302,20 +302,17 @@ class StudentController extends Controller
             return response()->json(['message' => 'Student not found'], 404);
         }
 
-        // Base Query
-        $baseQuery = Transaction::where('user_id', $id);
-
-        // Calculate Stats (Global)
+        // Calculate Stats — each uses a fresh query to avoid shallow-clone mutation
         $stats = [
-            'totalBorrowed' => (clone $baseQuery)->count(),
-            'currentLoans' => (clone $baseQuery)->whereNull('returned_at')->count(),
-            'overdueCount' => (clone $baseQuery)->whereNull('returned_at')->where('due_date', '<', now())->count(),
-            'totalFines' => (clone $baseQuery)->sum('penalty_amount'),
-            'pendingFines' => (clone $baseQuery)->where('payment_status', 'pending')->sum('penalty_amount')
+            'totalBorrowed' => Transaction::where('user_id', $id)->count(),
+            'currentLoans' => Transaction::where('user_id', $id)->whereNull('returned_at')->count(),
+            'overdueCount' => Transaction::where('user_id', $id)->whereNull('returned_at')->where('due_date', '<', now())->count(),
+            'totalFines' => Transaction::where('user_id', $id)->sum('penalty_amount'),
+            'pendingFines' => Transaction::where('user_id', $id)->where('payment_status', 'pending')->where('penalty_amount', '>', 0)->sum('penalty_amount')
         ];
 
         // Get Paginated Transactions
-        $transactions = $baseQuery
+        $transactions = Transaction::where('user_id', $id)
             ->join('book_assets', 'transactions.book_asset_id', '=', 'book_assets.id')
             ->join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
             ->select(

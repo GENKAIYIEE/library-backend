@@ -133,6 +133,8 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/reports/demographics', [ReportController::class, 'demographics']);
     Route::get('/reports/export/{type}', [ReportController::class, 'exportCsv']);
     Route::get('/reports/faculty-statistics', [ReportController::class, 'facultyStatistics']);
+    Route::get('/reports/financial-current', [ReportController::class, 'financialCurrent']);
+    Route::get('/reports/financial-history', [ReportController::class, 'financialHistory']);
 
     // User Management (Admin Only)
     Route::get('/users', [UserController::class, 'index']);

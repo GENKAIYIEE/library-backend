@@ -83,14 +83,4 @@ class Faculty extends Model
             ->where('due_date', '<', now())
             ->exists();
     }
-
-    /**
-     * Get pending fines total
-     */
-    public function getPendingFinesAttribute()
-    {
-        return $this->transactions()
-            ->where('payment_status', 'pending')
-            ->sum('penalty_amount');
-    }
 }

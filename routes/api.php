@@ -20,17 +20,11 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::post('/forgot-password/send-otp', [App\Http\Controllers\ForgotPasswordController::class, 'sendOtp']);
 Route::post('/forgot-password/verify-otp', [App\Http\Controllers\ForgotPasswordController::class, 'verifyOtp']);
 Route::post('/forgot-password/reset', [App\Http\Controllers\ForgotPasswordController::class, 'resetPassword']);
-Route::get('/books', [BookController::class, 'index']);
 Route::get('/books/search/{keyword}', [BookController::class, 'search']);
-Route::get('/books/available', [BookController::class, 'getAvailableBooks']);
-Route::get('/books/borrowed', [BookController::class, 'getBorrowedBooks']);
 Route::get('/books/lookup/{barcode}', [BookController::class, 'lookup']);
 Route::get('/books/lookup-isbn/{isbn}', [BookController::class, 'lookupIsbn']);
-Route::get('/students/{studentId}/clearance', [BookController::class, 'checkClearance']);
 
 
-// DEBUG ROUTE
-require __DIR__ . '/debug_unique.php';
 
 // Public Settings (for circulation display)
 Route::get('/settings/circulation', [SettingController::class, 'circulation']);
@@ -50,6 +44,15 @@ Route::prefix('public')->group(function () {
 */
 Route::group(['middleware' => ['auth:sanctum']], function () {
 
+    // DEBUG ROUTE (Secured behind auth:sanctum)
+
+
+    // Book & Student routes secured (contain PII)
+    Route::get('/books', [BookController::class, 'index']);
+    Route::get('/books/available', [BookController::class, 'getAvailableBooks']);
+    Route::get('/books/borrowed', [BookController::class, 'getBorrowedBooks']);
+    Route::get('/students/{studentId}/clearance', [BookController::class, 'checkClearance']);
+
     // Auth
     Route::get('/transactions', [App\Http\Controllers\TransactionController::class, 'index']);
     Route::post('/logout', [AuthController::class, 'logout']);
@@ -61,7 +64,7 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/settings', [SettingController::class, 'index']);
     Route::put('/settings', [SettingController::class, 'bulkUpdate']);
     Route::put('/settings/{key}', [SettingController::class, 'update']);
-    Route::post('/settings/reset', [SettingController::class, 'reset']);
+
 
     // Book Management
     Route::post('/books/title', [BookController::class, 'storeTitle']);
@@ -91,7 +94,7 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::post('/transactions/{id}/pay', [TransactionController::class, 'markAsPaid']);
     Route::post('/transactions/{id}/waive', [TransactionController::class, 'waiveFine']);
     Route::post('/transactions/{id}/unpaid', [TransactionController::class, 'markAsUnpaid']); // NEW
-    Route::delete('/transactions/{id}/force', [TransactionController::class, 'forceDelete']); // NEW
+
     Route::post('/transactions/force-delete-bulk', [TransactionController::class, 'forceDeleteBulk']); // NEW Bulk
 
 
@@ -101,7 +104,7 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/students', [App\Http\Controllers\StudentController::class, 'index']);
     Route::post('/students', [App\Http\Controllers\StudentController::class, 'store']);
     Route::put('/students/{id}', [App\Http\Controllers\StudentController::class, 'update']);
-    Route::delete('/students/{id}', [App\Http\Controllers\StudentController::class, 'destroy']);
+
     Route::post('/students/batch', [App\Http\Controllers\StudentController::class, 'batchStore']);
     Route::get('/students/{id}/history', [App\Http\Controllers\StudentController::class, 'history']);
 
@@ -124,7 +127,7 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
 
     // Book CRUD (Update & Delete)
     Route::put('/books/{id}', [BookController::class, 'update']);
-    Route::delete('/books/{id}', [BookController::class, 'destroy']);
+
 
     // Notifications
     Route::get('/notifications', [App\Http\Controllers\NotificationController::class, 'index']);
@@ -146,7 +149,7 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
 
     // User Management (Admin Only)
     Route::get('/users', [UserController::class, 'index']);
-    Route::post('/users', [UserController::class, 'store']);
+
     Route::put('/users/{id}', [UserController::class, 'update']);
     Route::delete('/users/{id}', [UserController::class, 'destroy']);
     Route::post('/users/check-unique', [UserController::class, 'checkUnique']);
@@ -174,4 +177,23 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/faculty/transactions', [App\Http\Controllers\FacultyTransactionController::class, 'index']);
     Route::post('/faculty/transactions/{id}/pay', [App\Http\Controllers\FacultyTransactionController::class, 'markAsPaid']);
     Route::post('/faculty/transactions/{id}/waive', [App\Http\Controllers\FacultyTransactionController::class, 'waiveFine']);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Admin-Only Routes (Role Check: admin)
+    |--------------------------------------------------------------------------
+    */
+    Route::group(['middleware' => function (Request $request, \Closure $next) {
+        if ($request->user()->role !== 'admin') {
+            abort(403, 'Forbidden. Admin access only.');
+        }
+        return $next($request);
+    }], function () {
+        Route::post('/settings/reset', [SettingController::class, 'reset']);
+        Route::delete('/transactions/{id}/force', [TransactionController::class, 'forceDelete']);
+        Route::delete('/students/{id}', [App\Http\Controllers\StudentController::class, 'destroy']);
+        Route::delete('/books/{id}', [BookController::class, 'destroy']);
+        Route::post('/users', [UserController::class, 'store']);
+    });
+
 });

@@ -13,9 +13,11 @@ use App\Http\Requests\UpdateBookTitleRequest;
 class BookController extends Controller
 {
     // 1. GET ALL BOOKS (Public Catalog)
-public function index()
+public function index(Request $request)
 {
-    // Get books with counts for each status
+    $perPage = $request->input('per_page', 20);
+
+    // Get books with counts for each status — paginated
     return BookTitle::withCount([
         'assets as available_copies' => function ($query) {
             $query->where('status', 'available');
@@ -30,15 +32,20 @@ public function index()
             $query->where('status', 'lost');
         },
         'assets as total_copies'
-    ])->get();
+    ])->orderBy('title')->paginate($perPage);
 }
 
     // 2. SEARCH BOOKS
     public function search($keyword)
     {
-        return BookTitle::where('title', 'like', "%$keyword%")
-            ->orWhere('author', 'like', "%$keyword%")
-            ->orWhere('category', 'like', "%$keyword%")
+        // Escape SQL wildcard characters to prevent wildcard injection
+        // Without this, a user could send "%" to enumerate all records
+        // or use "_" patterns to probe data structure
+        $sanitized = addcslashes($keyword, '%_');
+
+        return BookTitle::where('title', 'like', "%{$sanitized}%")
+            ->orWhere('author', 'like', "%{$sanitized}%")
+            ->orWhere('category', 'like', "%{$sanitized}%")
             ->with('assets') // Include the physical copies in results
             ->get();
     }
@@ -425,9 +432,27 @@ public function index()
     // DELETE a book
     public function destroy($id)
     {
-        $book = BookTitle::find($id);
+        $book = BookTitle::with('assets')->find($id);
         if (!$book)
             return response()->json(['message' => 'Not found'], 404);
+
+        // Create a transaction record for each asset to log the deletion
+        foreach ($book->assets as $asset) {
+            \App\Models\Transaction::create([
+                'user_id' => auth()->id(), // Admin who deleted it
+                'book_asset_id' => $asset->id,
+                'borrowed_at' => now(),
+                'due_date' => now(), // No due date really
+                'returned_at' => now(), // Immediately "returned/completed"
+                'processed_by' => auth()->id(),
+                'penalty_amount' => 0,
+                'payment_status' => 'paid', // Or 'waived', just to not show as fine
+                'remarks' => 'Book Deleted'
+            ]);
+            
+            // Also delete the asset to keep things clean (optional but recommended)
+            $asset->delete();
+        }
 
         $book->delete();
         return response()->json(['message' => 'Deleted successfully']);
@@ -531,37 +556,131 @@ public function index()
     }
 
     // GET BORROWED BOOKS (for return dropdown)
-    public function getBorrowedBooks()
+    public function getBorrowedBooks(Request $request)
     {
-        $borrowedBooks = BookAsset::where('status', 'borrowed')
-            ->whereHas('bookTitle') // Only include assets with non-deleted book titles
-            // FIX: Only include books that have an active STUDENT transaction
-            ->whereHas('transactions', function ($query) {
-                $query->whereNull('returned_at');
-            })
-            ->with(['bookTitle:id,title,author,image_path'])
+        $type = $request->query('type'); // 'student', 'faculty', or null (both)
+
+        $query = BookAsset::where('status', 'borrowed')
+            ->whereHas('bookTitle'); // Only include assets with non-deleted book titles
+
+        // Filter based on requested type
+        if ($type === 'student') {
+            $query->whereHas('transactions', function ($q) {
+                $q->whereNull('returned_at');
+            });
+        } elseif ($type === 'faculty') {
+            $query->whereHas('facultyTransactions', function ($q) {
+                $q->whereNull('returned_at');
+            });
+        } else {
+            // Default: Include books that have EITHER active student OR faculty transaction
+            $query->where(function ($q) {
+                $q->whereHas('transactions', function ($sq) {
+                    $sq->whereNull('returned_at');
+                })->orWhereHas('facultyTransactions', function ($fq) {
+                    $fq->whereNull('returned_at');
+                });
+            });
+        }
+
+        $borrowedBooks = $query->with([
+            'bookTitle:id,title,author,image_path',
+            'transactions' => function ($query) {
+                $query->whereNull('returned_at')
+                      ->with('user:id,name,student_id');
+            },
+            'facultyTransactions' => function ($query) {
+                $query->whereNull('returned_at')
+                      ->with('faculty:id,faculty_id,name');
+            }
+        ])
             ->orderBy('asset_code')
             ->get()
-            ->map(function ($asset) {
-                // Get the active transaction for this book
-                $transaction = \App\Models\Transaction::where('book_asset_id', $asset->id)
-                    ->whereNull('returned_at')
-                    ->with('user:id,name,student_id')
-                    ->first();
+            ->map(function ($asset) use ($type) {
+                // If type is specifically 'student', only return if student transaction exists
+                if ($type === 'student') {
+                    $transaction = $asset->transactions->first();
+                    if ($transaction && $transaction->user) {
+                         return [
+                            'asset_code' => $asset->asset_code,
+                            'status' => $asset->status,
+                            'title' => $asset->bookTitle->title ?? 'Unknown',
+                            'subtitle' => $asset->bookTitle->subtitle ?? null,
+                            'author' => $asset->bookTitle->author ?? 'Unknown',
+                            'image_path' => $asset->bookTitle->image_path ?? null,
+                            'borrower' => $transaction->user->name,
+                            'student_id' => $transaction->user->student_id ?? 'N/A',
+                            'type' => 'Student',
+                            'due_date' => $transaction->due_date ?? null,
+                            'is_overdue' => $transaction->due_date ? now()->gt($transaction->due_date) : false
+                        ];
+                    }
+                    return null; // Should not happen given query constraints, but safe guard
+                }
 
-                return [
-                    'asset_code' => $asset->asset_code,
-                    'status' => $asset->status, // Added status field
-                    'title' => $asset->bookTitle->title ?? 'Unknown',
-                    'subtitle' => $asset->bookTitle->subtitle ?? null, // Added subtitle
-                    'author' => $asset->bookTitle->author ?? 'Unknown',
-                    'image_path' => $asset->bookTitle->image_path ?? null,
-                    'borrower' => $transaction->user->name ?? 'Unknown',
-                    'student_id' => $transaction->user->student_id ?? 'N/A',
-                    'due_date' => $transaction->due_date ?? null,
-                    'is_overdue' => $transaction && $transaction->due_date ? now()->gt($transaction->due_date) : false
-                ];
-            });
+                // If type is specifically 'faculty', only return if faculty transaction exists
+                if ($type === 'faculty') {
+                    $facultyTrans = $asset->facultyTransactions->first();
+                    if ($facultyTrans && $facultyTrans->faculty) {
+                        return [
+                            'asset_code' => $asset->asset_code,
+                            'status' => $asset->status,
+                            'title' => $asset->bookTitle->title ?? 'Unknown',
+                            'subtitle' => $asset->bookTitle->subtitle ?? null,
+                            'author' => $asset->bookTitle->author ?? 'Unknown',
+                            'image_path' => $asset->bookTitle->image_path ?? null,
+                            'borrower' => $facultyTrans->faculty->name,
+                            'student_id' => $facultyTrans->faculty->faculty_id ?? 'N/A',
+                            'type' => 'Faculty',
+                            'due_date' => $facultyTrans->due_date ?? null,
+                            'is_overdue' => $facultyTrans->due_date ? now()->gt($facultyTrans->due_date) : false
+                        ];
+                    }
+                     return null;
+                }
+
+                // Fallback (Mixed/No Type): Try student first, then faculty
+                $transaction = $asset->transactions->first();
+
+                if ($transaction && $transaction->user) {
+                    return [
+                        'asset_code' => $asset->asset_code,
+                        'status' => $asset->status,
+                        'title' => $asset->bookTitle->title ?? 'Unknown',
+                        'subtitle' => $asset->bookTitle->subtitle ?? null,
+                        'author' => $asset->bookTitle->author ?? 'Unknown',
+                        'image_path' => $asset->bookTitle->image_path ?? null,
+                        'borrower' => $transaction->user->name,
+                        'student_id' => $transaction->user->student_id ?? 'N/A',
+                        'type' => 'Student',
+                        'due_date' => $transaction->due_date ?? null,
+                        'is_overdue' => $transaction->due_date ? now()->gt($transaction->due_date) : false
+                    ];
+                }
+
+                // Try faculty transaction
+                $facultyTrans = $asset->facultyTransactions->first();
+
+                if ($facultyTrans && $facultyTrans->faculty) {
+                    return [
+                        'asset_code' => $asset->asset_code,
+                        'status' => $asset->status,
+                        'title' => $asset->bookTitle->title ?? 'Unknown',
+                        'subtitle' => $asset->bookTitle->subtitle ?? null,
+                        'author' => $asset->bookTitle->author ?? 'Unknown',
+                        'image_path' => $asset->bookTitle->image_path ?? null,
+                        'borrower' => $facultyTrans->faculty->name,
+                        'student_id' => $facultyTrans->faculty->faculty_id ?? 'N/A',
+                        'type' => 'Faculty',
+                        'due_date' => $facultyTrans->due_date ?? null,
+                        'is_overdue' => $facultyTrans->due_date ? now()->gt($facultyTrans->due_date) : false
+                    ];
+                }
+
+                return null;
+            })
+            ->filter() // Remove nulls
+            ->values();
 
         return response()->json($borrowedBooks);
     }
@@ -666,7 +785,6 @@ public function index()
                 'is_overdue' => false
             ];
 
-            // If book is borrowed, get borrower info
             if ($bookAsset->status === 'borrowed') {
                 $transaction = \App\Models\Transaction::where('book_asset_id', $bookAsset->id)
                     ->whereNull('returned_at')
@@ -677,10 +795,28 @@ public function index()
                     $response['borrower'] = [
                         'name' => $transaction->user->name,
                         'student_id' => $transaction->user->student_id,
-                        'course' => $transaction->user->course
+                        'course' => $transaction->user->course,
+                        'type' => 'Student'
                     ];
                     $response['due_date'] = $transaction->due_date;
                     $response['is_overdue'] = now()->gt($transaction->due_date);
+                } else {
+                    // Try Faculty Transaction
+                    $facultyTrans = \App\Models\FacultyTransaction::where('book_asset_id', $bookAsset->id)
+                        ->whereNull('returned_at')
+                        ->with('faculty')
+                        ->first();
+
+                    if ($facultyTrans) {
+                        $response['borrower'] = [
+                            'name' => $facultyTrans->faculty->name,
+                            'student_id' => $facultyTrans->faculty->faculty_id,
+                            'course' => $facultyTrans->faculty->department,
+                            'type' => 'Faculty'
+                        ];
+                        $response['due_date'] = $facultyTrans->due_date;
+                        $response['is_overdue'] = $facultyTrans->due_date ? now()->gt($facultyTrans->due_date) : false;
+                    }
                 }
             }
 
@@ -727,43 +863,61 @@ public function index()
 
             if ($borrowedAsset) {
                 // Has a borrowed copy - return that asset with borrower info
-                $transaction = \App\Models\Transaction::where('book_asset_id', $borrowedAsset->id)
+                $response = [
+                'found' => true,
+                'asset_code' => $borrowedAsset->asset_code,
+                'status' => 'borrowed',
+                'title' => $bookTitle->title,
+                'author' => $bookTitle->author,
+                'category' => $bookTitle->category,
+                'publisher' => $bookTitle->publisher,
+                'published_year' => $bookTitle->published_year,
+                'call_number' => $bookTitle->call_number,
+                'pages' => $bookTitle->pages,
+                'language' => $bookTitle->language,
+                'description' => $bookTitle->description,
+                'image_path' => $bookTitle->image_path,
+                'isbn' => $bookTitle->isbn,
+                'location' => trim($borrowedAsset->building . ' - ' . $borrowedAsset->aisle . ' - ' . $borrowedAsset->shelf, ' -') ?: ($bookTitle->location ?? 'N/A'),
+                'borrower' => null,
+                'due_date' => null,
+                'is_overdue' => false
+            ];
+
+            $transaction = \App\Models\Transaction::where('book_asset_id', $borrowedAsset->id)
+                ->whereNull('returned_at')
+                ->with('user:id,name,student_id,course')
+                ->first();
+
+            if ($transaction) {
+                $response['borrower'] = [
+                    'name' => $transaction->user->name,
+                    'student_id' => $transaction->user->student_id,
+                    'course' => $transaction->user->course,
+                    'type' => 'Student'
+                ];
+                $response['due_date'] = $transaction->due_date;
+                $response['is_overdue'] = now()->gt($transaction->due_date);
+            } else {
+                // Try Faculty Transaction
+                $facultyTrans = \App\Models\FacultyTransaction::where('book_asset_id', $borrowedAsset->id)
                     ->whereNull('returned_at')
-                    ->with('user:id,name,student_id,course')
+                    ->with('faculty')
                     ->first();
 
-                $response = [
-                    'found' => true,
-                    'asset_code' => $borrowedAsset->asset_code,
-                    'status' => 'borrowed',
-                    'title' => $bookTitle->title,
-                    'author' => $bookTitle->author,
-                    'category' => $bookTitle->category,
-                    'publisher' => $bookTitle->publisher,
-                    'published_year' => $bookTitle->published_year,
-                    'call_number' => $bookTitle->call_number,
-                    'pages' => $bookTitle->pages,
-                    'language' => $bookTitle->language,
-                    'description' => $bookTitle->description,
-                    'image_path' => $bookTitle->image_path,
-                    'isbn' => $bookTitle->isbn,
-                    'location' => trim($borrowedAsset->building . ' - ' . $borrowedAsset->aisle . ' - ' . $borrowedAsset->shelf, ' -') ?: ($bookTitle->location ?? 'N/A'),
-                    'borrower' => null,
-                    'due_date' => null,
-                    'is_overdue' => false
-                ];
-
-                if ($transaction) {
+                if ($facultyTrans) {
                     $response['borrower'] = [
-                        'name' => $transaction->user->name,
-                        'student_id' => $transaction->user->student_id,
-                        'course' => $transaction->user->course
+                        'name' => $facultyTrans->faculty->name,
+                        'student_id' => $facultyTrans->faculty->faculty_id,
+                        'course' => $facultyTrans->faculty->department,
+                        'type' => 'Faculty'
                     ];
-                    $response['due_date'] = $transaction->due_date;
-                    $response['is_overdue'] = now()->gt($transaction->due_date);
+                    $response['due_date'] = $facultyTrans->due_date;
+                    $response['is_overdue'] = $facultyTrans->due_date ? now()->gt($facultyTrans->due_date) : false;
                 }
+            }
 
-                return response()->json($response);
+            return response()->json($response);
             }
 
             // Book title exists but no physical copies yet
@@ -929,40 +1083,45 @@ public function index()
      */
     public function getCategorySummary()
     {
+        // 1. Title counts per category (1 query)
         $categories = BookTitle::selectRaw('
             category,
             COUNT(*) as total_books
         ')
         ->groupBy('category')
         ->orderBy('category')
-        ->get()
-        ->map(function ($cat) {
-            // Count available books in this category
-            $available = BookTitle::where('category', $cat->category)
-                ->whereHas('assets', function ($q) {
-                    $q->where('status', 'available');
-                })
-                ->count();
+        ->get();
 
-            // Get total copies
-            $totalCopies = BookAsset::whereHas('bookTitle', function ($q) use ($cat) {
-                $q->where('category', $cat->category);
-            })->count();
+        // 2. Available titles per category — titles that have at least one available asset (1 query)
+        $availableTitles = BookTitle::whereHas('assets', function ($q) {
+                $q->where('status', 'available');
+            })
+            ->selectRaw('category, COUNT(*) as cnt')
+            ->groupBy('category')
+            ->pluck('cnt', 'category');
 
-            $availableCopies = BookAsset::whereHas('bookTitle', function ($q) use ($cat) {
-                $q->where('category', $cat->category);
-            })->where('status', 'available')->count();
+        // 3. Asset counts per category — total and available copies (1 query using join)
+        $assetCounts = BookAsset::join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
+            ->selectRaw('book_titles.category, COUNT(*) as total_copies, SUM(CASE WHEN book_assets.status = ? THEN 1 ELSE 0 END) as available_copies', ['available'])
+            ->groupBy('book_titles.category')
+            ->get()
+            ->keyBy('category');
+
+        // Map results — no extra queries
+        $result = $categories->map(function ($cat) use ($availableTitles, $assetCounts) {
+            $categoryKey = $cat->category;
+            $assetData = $assetCounts->get($categoryKey);
 
             return [
-                'category' => $cat->category ?: 'Uncategorized',
+                'category' => $categoryKey ?: 'Uncategorized',
                 'total_books' => $cat->total_books,
-                'available_titles' => $available,
-                'total_copies' => $totalCopies,
-                'available_copies' => $availableCopies
+                'available_titles' => (int) ($availableTitles[$categoryKey] ?? 0),
+                'total_copies' => (int) ($assetData->total_copies ?? 0),
+                'available_copies' => (int) ($assetData->available_copies ?? 0)
             ];
         });
 
-        return response()->json($categories);
+        return response()->json($result);
     }
 
     /**
@@ -976,6 +1135,9 @@ public function index()
         $search = $request->input('search', '');
 
         $query = BookTitle::where('category', $category)
+            ->with(['assets' => function ($q) {
+                $q->orderBy('asset_code');
+            }])
             ->withCount([
                 'assets as available_copies' => function ($query) {
                     $query->where('status', 'available');

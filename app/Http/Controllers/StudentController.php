@@ -485,29 +485,31 @@ class StudentController extends Controller
      */
     public function getCourseSummary()
     {
+        // 1. Student counts per course (1 query)
         $courses = User::where('role', 'student')
             ->selectRaw('course, COUNT(*) as total_students')
             ->groupBy('course')
             ->orderBy('course')
-            ->get()
-            ->map(function ($course) {
-                // Get additional stats per course
-                $activeLoans = User::where('role', 'student')
-                    ->where('course', $course->course)
-                    ->withCount(['transactions as active_loans' => function ($q) {
-                        $q->whereNull('returned_at');
-                    }])
-                    ->get()
-                    ->sum('active_loans');
+            ->get();
 
-                return [
-                    'course' => $course->course ?: 'Not Specified',
-                    'total_students' => $course->total_students,
-                    'active_loans' => $activeLoans
-                ];
-            });
+        // 2. Active loans per course — single bulk query using join (1 query)
+        $activeLoansPerCourse = \App\Models\Transaction::join('users', 'transactions.user_id', '=', 'users.id')
+            ->where('users.role', 'student')
+            ->whereNull('transactions.returned_at')
+            ->selectRaw('users.course, COUNT(*) as active_loans')
+            ->groupBy('users.course')
+            ->pluck('active_loans', 'course');
 
-        return response()->json($courses);
+        // Map results — no extra queries
+        $result = $courses->map(function ($course) use ($activeLoansPerCourse) {
+            return [
+                'course' => $course->course ?: 'Not Specified',
+                'total_students' => $course->total_students,
+                'active_loans' => (int) ($activeLoansPerCourse[$course->course] ?? 0)
+            ];
+        });
+
+        return response()->json($result);
     }
 
     /**

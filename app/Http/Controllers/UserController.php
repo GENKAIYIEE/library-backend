@@ -113,21 +113,11 @@ class UserController extends Controller
             return response()->json(['error' => 'Invalid field'], 400);
         }
 
-        // DEBUG LOGGING
-        $logData = "Field: $field, Value: $value\n";
-
         $query = User::where($field, $value)->whereNull('deleted_at');
 
         if ($excludeId) {
             $query->where('id', '!=', $excludeId);
         }
-
-        $logData .= "SQL: " . $query->toSql() . "\n";
-        $logData .= "Bindings: " . json_encode($query->getBindings()) . "\n";
-
-        $exists = $query->exists();
-        $logData .= "Exists: " . ($exists ? 'YES' : 'NO') . "\n----------------\n";
-        file_put_contents(public_path('debug_unique.txt'), $logData, FILE_APPEND);
 
         $exists = $query->exists();
 

@@ -242,20 +242,38 @@ class TransactionController extends Controller
     public function history(Request $request)
     {
         // If Admin, show all. If Student, show only theirs.
-        $query = Transaction::with(['user', 'bookAsset.bookTitle']);
+        // Use closure-based eager loading to include soft-deleted assets and titles
+        $query = Transaction::with([
+            'user',
+            'bookAsset' => function ($q) {
+                $q->withTrashed()->with(['bookTitle' => function ($q2) {
+                    $q2->withTrashed();
+                }]);
+            }
+        ]);
 
         if ($request->user()->role === 'student') {
             $query->where('user_id', $request->user()->id);
         }
 
-        return $query->latest()->get();
+        return $query->latest()->paginate(15);
     }
-    public function index()
+    public function index(Request $request)
     {
-        // Get all transactions with Student and Book details
-        $transactions = \App\Models\Transaction::with(['user', 'bookAsset.bookTitle'])
+        // Get all transactions with Student and Book details — paginated
+        $perPage = $request->input('per_page', 15);
+
+        // Use closure-based eager loading to include soft-deleted assets and titles
+        $transactions = \App\Models\Transaction::with([
+            'user',
+            'bookAsset' => function ($q) {
+                $q->withTrashed()->with(['bookTitle' => function ($q2) {
+                    $q2->withTrashed();
+                }]);
+            }
+        ])
             ->orderBy('created_at', 'desc')
-            ->get();
+            ->paginate($perPage);
 
         return response()->json($transactions);
     }

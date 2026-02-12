@@ -339,7 +339,25 @@ class ReportController extends Controller
         if ($section)
             $usersQuery->where('section', $section);
 
-        $students = $usersQuery->get();
+        // Eager load aggregates: active loans, overdue count, and pending fines per student
+        $students = $usersQuery
+            ->withCount([
+                'transactions as active_loans_count' => function ($q) {
+                    $q->whereNull('returned_at');
+                },
+                'transactions as overdue_count' => function ($q) {
+                    $q->whereNull('returned_at')
+                      ->where('due_date', '<', now());
+                },
+            ])
+            ->withSum(
+                ['transactions as pending_fines_sum' => function ($q) {
+                    $q->where('payment_status', 'pending');
+                }],
+                'penalty_amount'
+            )
+            ->get();
+
         $studentIds = $students->pluck('id');
 
         // Stats
@@ -363,20 +381,11 @@ class ReportController extends Controller
             ->where('payment_status', 'pending')
             ->sum('penalty_amount');
 
-        // Student Breakdown
+        // Student Breakdown — no extra queries, uses eager-loaded aggregates
         $breakdown = $students->map(function ($student) {
-            $activeLoans = Transaction::where('user_id', $student->id)
-                ->whereNull('returned_at')
-                ->count();
-
-            $hasOverdue = Transaction::where('user_id', $student->id)
-                ->whereNull('returned_at')
-                ->where('due_date', '<', now())
-                ->exists();
-
-            $totalFine = Transaction::where('user_id', $student->id)
-                ->where('payment_status', 'pending')
-                ->sum('penalty_amount');
+            $activeLoans = (int) $student->active_loans_count;
+            $hasOverdue = (int) $student->overdue_count > 0;
+            $totalFine = (float) ($student->pending_fines_sum ?? 0);
 
             return [
                 'id' => $student->id,

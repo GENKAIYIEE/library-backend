@@ -559,7 +559,7 @@ class BookController extends Controller
     // NEW: Get books for Dashboard Grid (recent available ones)
     public function getDashboardBooks(Request $request)
     {
-        $limit = $request->query('limit', 12); // Default 12 items
+        $limit = $request->query('limit', 6); // Default 6 items (Top 6 newest)
 
         // Get distinct book titles that have at least one available copy
         $books = BookTitle::whereHas('assets', function ($query) {

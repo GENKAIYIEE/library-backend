@@ -61,11 +61,17 @@ class ReportController extends Controller
      * @param Request $request - Optional: start_date, end_date
      * @return \Illuminate\Http\JsonResponse
      */
-    public function topStudents(Request $request)
+    public function topStudents(Request $request) 
     {
+        $startDate = $request->has('start_date') ? Carbon::parse($request->start_date)->startOfDay() : null;
+        $endDate = $request->has('end_date') ? Carbon::parse($request->end_date)->endOfDay() : null;
+        $search = $request->input('search');
+
+        // Base Query: Get all students with their borrow counts
         $query = Transaction::query()
             ->join('users', 'transactions.user_id', '=', 'users.id')
             ->whereNull('users.deleted_at')
+            ->where('users.role', 'student')
             ->select(
                 'users.id',
                 'users.name',
@@ -77,20 +83,56 @@ class ReportController extends Controller
                 DB::raw('COUNT(transactions.id) as borrow_count'),
                 DB::raw('SUM(CASE WHEN transactions.returned_at IS NULL THEN 1 ELSE 0 END) as active_loans')
             )
-            ->where('users.role', 'student')
             ->groupBy('users.id', 'users.name', 'users.student_id', 'users.course', 'users.year_level', 'users.section', 'users.profile_picture');
 
-        // Apply date filters
-        if ($request->has('start_date')) {
-            $query->where('transactions.borrowed_at', '>=', $request->start_date);
+        if ($startDate) {
+            $query->where('transactions.borrowed_at', '>=', $startDate);
         }
-        if ($request->has('end_date')) {
-            $query->where('transactions.borrowed_at', '<=', $request->end_date);
+        if ($endDate) {
+            $query->where('transactions.borrowed_at', '<=', $endDate);
         }
 
-        $results = $query->orderByDesc('borrow_count')->limit(10)->get();
+        // Fetch all results to calculate global rank accurately in PHP
+        // This avoids complex SQL window functions that may not be supported or compatible with pagination
+        $allResults = $query->orderByDesc('borrow_count')->get();
 
-        return response()->json($results);
+        // Assign Ranks and Transform to Collection
+        $rankedStudents = $allResults->map(function ($student, $index) {
+            $student->rank = $index + 1;
+            return $student;
+        });
+
+        // Apply Search Filter if present
+        if ($search) {
+            $filtered = $rankedStudents->filter(function ($student) use ($search) {
+                return stripos($student->name, $search) !== false || stripos($student->student_id, $search) !== false;
+            });
+            
+            // Manual Pagination for Search Results
+            $perPage = $request->input('per_page', 10);
+            $page = $request->input('page', 1);
+            $total = $filtered->count();
+            
+            $results = new \Illuminate\Pagination\LengthAwarePaginator(
+                $filtered->forPage($page, $perPage)->values(),
+                $total,
+                $perPage,
+                $page,
+                ['path' => $request->url(), 'query' => $request->query()]
+            );
+            
+            return response()->json($results);
+        }
+
+        // Default: Top 3 only
+        // Return structured data compatible with frontend expectations
+        return response()->json([
+            'data' => $rankedStudents->take(3)->values(),
+            'current_page' => 1,
+            'last_page' => 1,
+            'total' => 3,
+            'per_page' => 3
+        ]);
     }
 
     /**

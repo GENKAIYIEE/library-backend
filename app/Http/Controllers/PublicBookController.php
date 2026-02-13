@@ -16,6 +16,7 @@ class PublicBookController extends Controller
     {
         $limit = $request->query('limit', 12);
         $search = $request->query('search');
+        $category = $request->query('category');
 
         $query = BookTitle::withCount([
             'assets as available_copies' => function ($query) {
@@ -28,18 +29,24 @@ class PublicBookController extends Controller
                 $query->where('status', 'damaged');
             }
         ])
-        // Only include books that have at least one asset that is NOT lost/archived (include damaged)
-        ->whereHas('assets', function ($q) {
-            $q->whereIn('status', ['available', 'borrowed', 'damaged']);
-        });
+            // Only include books that have at least one asset that is NOT lost/archived (include damaged)
+            ->whereHas('assets', function ($q) {
+                $q->whereIn('status', ['available', 'borrowed', 'damaged']);
+            });
 
+        // Apply Category Filter
+        if ($category && $category !== 'All') {
+            $query->where('category', $category);
+        }
+
+        // Apply Search Filter
         if ($search) {
             $query->where(function ($q) use ($search) {
                 $q->where('title', 'like', "%$search%")
                     ->orWhere('subtitle', 'like', "%$search%")
                     ->orWhere('author', 'like', "%$search%")
-                    ->orWhere('category', 'like', "%$search%")
-                    ->orWhere('isbn', 'like', "%$search%");
+                    ->orWhere('isbn', 'like', "%$search%")
+                    ->orWhere('call_number', 'like', "%$search%");
             });
         }
 

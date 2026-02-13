@@ -13,27 +13,27 @@ use App\Http\Requests\UpdateBookTitleRequest;
 class BookController extends Controller
 {
     // 1. GET ALL BOOKS (Public Catalog)
-public function index(Request $request)
-{
-    $perPage = $request->input('per_page', 20);
+    public function index(Request $request)
+    {
+        $perPage = $request->input('per_page', 20);
 
-    // Get books with counts for each status — paginated
-    return BookTitle::withCount([
-        'assets as available_copies' => function ($query) {
-            $query->where('status', 'available');
-        },
-        'assets as borrowed_copies' => function ($query) {
-            $query->where('status', 'borrowed');
-        },
-        'assets as damaged_copies' => function ($query) {
-            $query->where('status', 'damaged');
-        },
-        'assets as lost_copies' => function ($query) {
-            $query->where('status', 'lost');
-        },
-        'assets as total_copies'
-    ])->orderBy('title')->paginate($perPage);
-}
+        // Get books with counts for each status — paginated
+        return BookTitle::withCount([
+            'assets as available_copies' => function ($query) {
+                $query->where('status', 'available');
+            },
+            'assets as borrowed_copies' => function ($query) {
+                $query->where('status', 'borrowed');
+            },
+            'assets as damaged_copies' => function ($query) {
+                $query->where('status', 'damaged');
+            },
+            'assets as lost_copies' => function ($query) {
+                $query->where('status', 'lost');
+            },
+            'assets as total_copies'
+        ])->orderBy('title')->paginate($perPage);
+    }
 
     // 2. SEARCH BOOKS
     public function search($keyword)
@@ -81,7 +81,8 @@ public function index(Request $request)
         $prefix = 'BOOK-' . $year . '-';
 
         // Find the latest asset_code for the current year
-        $latestAsset = BookAsset::where('asset_code', 'like', $prefix . '%')
+        $latestAsset = BookAsset::withTrashed()
+            ->where('asset_code', 'like', $prefix . '%')
             ->orderBy('asset_code', 'desc')
             ->first();
 
@@ -139,6 +140,75 @@ public function index(Request $request)
             'sequence' => $nextSequence,
             'year' => $year
         ]);
+    }
+
+    /**
+     * Check if one or more accession numbers are already in use.
+     *
+     * Checks against both book_titles.accession_no and book_assets.asset_code.
+     * Supports single check (?accession_no=X) and batch check (?batch=X,Y,Z).
+     * Pass ?exclude_book_id=N to ignore the current book during edits.
+     *
+     * @param  Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function checkAccession(Request $request)
+    {
+        $excludeBookId = $request->input('exclude_book_id');
+
+        // --- Batch mode: check multiple accession numbers at once ---
+        if ($request->filled('batch')) {
+            $codes = array_filter(
+                array_map('trim', explode(',', $request->input('batch')))
+            );
+
+            $results = [];
+            foreach ($codes as $code) {
+                $results[$code] = $this->isAccessionAvailable($code, $excludeBookId);
+            }
+
+            return response()->json(['results' => $results]);
+        }
+
+        // --- Single mode ---
+        $code = $request->input('accession_no');
+        if (!$code) {
+            return response()->json(['available' => true, 'conflict_type' => null]);
+        }
+
+        $check = $this->isAccessionAvailable($code, $excludeBookId);
+
+        return response()->json($check);
+    }
+
+    /**
+     * Internal helper: determine if a single accession number is available.
+     *
+     * @param  string      $code
+     * @param  int|null    $excludeBookId  Book-title ID to ignore (edit mode)
+     * @return array{available: bool, conflict_type: string|null}
+     */
+    private function isAccessionAvailable(string $code, $excludeBookId = null): array
+    {
+        // 1. Check book_titles.accession_no (soft-delete aware)
+        $titleQuery = BookTitle::where('accession_no', $code)->whereNull('deleted_at');
+        if ($excludeBookId) {
+            $titleQuery->where('id', '!=', $excludeBookId);
+        }
+        if ($titleQuery->exists()) {
+            return ['available' => false, 'conflict_type' => 'title'];
+        }
+
+        // 2. Check book_assets.asset_code (include trashed to be safe)
+        $assetQuery = BookAsset::withTrashed()->where('asset_code', $code);
+        if ($excludeBookId) {
+            $assetQuery->where('book_title_id', '!=', $excludeBookId);
+        }
+        if ($assetQuery->exists()) {
+            return ['available' => false, 'conflict_type' => 'asset'];
+        }
+
+        return ['available' => true, 'conflict_type' => null];
     }
 
     /**
@@ -232,62 +302,10 @@ public function index(Request $request)
 
             // Auto-generate physical copies (BookAsset records)
             $copies = isset($fields['copies']) ? (int) $fields['copies'] : 0;
-            $createdAssets = [];
-
-            // Get the base accession number from request or generate one
             $baseAccession = $request->input('accession_no');
-            
-            // Determine status for new copies
             $initialStatus = $request->boolean('is_damaged') ? 'damaged' : 'available';
 
-            for ($i = 0; $i < $copies; $i++) {
-                if ($baseAccession) {
-                    // Smart Increment Logic for Accession Number
-                    if ($i === 0) {
-                        $assetCode = $baseAccession;
-                    } else {
-                        // Try to increment the last number found in the string
-                        if (preg_match('/^(.*?)(\d+)$/', $baseAccession, $matches)) {
-                            $prefix = $matches[1];
-                            $number = $matches[2];
-                            $length = strlen($number);
-                            $newNumber = (int)$number + $i;
-                            $assetCode = $prefix . str_pad($newNumber, $length, '0', STR_PAD_LEFT);
-                        } else {
-                            // If no number to increment, append -Sequence
-                            $assetCode = $baseAccession . '-' . ($i + 1);
-                        }
-                    }
-
-                    // Strict check: If generated accession exists, we must stop or error
-                    // We can't just skip it because it breaks the sequence expected by the user.
-                    if (BookAsset::where('asset_code', $assetCode)->exists()) {
-                         return response()->json([
-                            'message' => "Accession number $assetCode already exists. Please choose a range that is free.",
-                            'errors' => ['accession_no' => ["Sequence collision: $assetCode already exists."]]
-                        ], 422);
-                    }
-
-                } else {
-                    // No Accession Number provided -> Generate sequential asset code (BOOK-YYYY-XXXX)
-                    $assetCode = $this->generateAssetBarcode();
-                    
-                    // Generate Unique
-                    while (BookAsset::where('asset_code', $assetCode)->exists()) {
-                        $assetCode = $this->generateAssetBarcode();
-                    }
-                }
-
-                $asset = BookAsset::create([
-                    'book_title_id' => $bookTitle->id,
-                    'asset_code' => $assetCode,
-                    'building' => 'Main Library', // Default building
-                    'aisle' => null,
-                    'shelf' => $request->input('location'), // Map location input to shelf
-                    'status' => $initialStatus
-                ]);
-                $createdAssets[] = $asset;
-            }
+            $createdAssets = $this->generateBookAssets($bookTitle, $copies, $baseAccession, $fields['location'] ?? null, $initialStatus);
 
             // Load the assets relationship for response
             $bookTitle->load('assets');
@@ -306,42 +324,86 @@ public function index(Request $request)
         }
     }
 
-    // 4. ADD PHYSICAL COPY TO SHELF (Admin Only)
-    public function storeAsset(Request $request)
+    /**
+     * Helper to generate book assets.
+     * Can be used for creating new books or adding copies to existing ones.
+     */
+    private function generateBookAssets($bookTitle, $count, $baseAccession = null, $location = null, $status = 'available')
     {
-        $fields = $request->validate([
-            'book_title_id' => 'required|exists:book_titles,id',
-            'building' => 'nullable|string',
-            'aisle' => 'nullable|string',
-            'shelf' => 'nullable|string',
-            'accession_no' => 'nullable|string|unique:book_assets,asset_code' // Allow manual entry
-        ]);
+        $createdAssets = [];
 
-        // Use provided accession number or auto-generate
-        if (!empty($fields['accession_no'])) {
-            $assetCode = $fields['accession_no'];
-        } else {
-            // Auto-generate the asset barcode
-            $assetCode = $this->generateAssetBarcode();
-            // Ensure uniqueness for auto-generated code
-            while (BookAsset::where('asset_code', $assetCode)->exists()) {
+        for ($i = 0; $i < $count; $i++) {
+            if ($baseAccession) {
+                // Smart Increment Logic for Accession Number
+                if ($i === 0) {
+                    $assetCode = $baseAccession;
+                } else {
+                    // Try to increment the last number found in the string
+                    if (preg_match('/^(.*?)(\d+)$/', $baseAccession, $matches)) {
+                        $prefix = $matches[1];
+                        $number = $matches[2];
+                        $length = strlen($number);
+                        $newNumber = (int) $number + $i;
+                        $assetCode = $prefix . str_pad($newNumber, $length, '0', STR_PAD_LEFT);
+                    } else {
+                        // If no number to increment, append -Sequence
+                        $assetCode = $baseAccession . '-' . ($i + 1);
+                    }
+                }
+
+                // Strict check: If generated accession exists, avoid collision
+                // For bulk creation, skipping might be safer than erroring out the whole batch,
+                // but let's stick to the original logic which throws an error to notify user.
+                if (BookAsset::withTrashed()->where('asset_code', $assetCode)->exists()) {
+                    // If collision happens during loop, we stop and return what we have so far?
+                    // Or throw exception to trigger catch block?
+                    // Let's throw an exception to be caught by the controller
+                    throw new \Exception("Accession number $assetCode already exists.");
+                }
+
+            } else {
+                // No Accession Number provided -> Generate sequential asset code (BOOK-YYYY-XXXX)
                 $assetCode = $this->generateAssetBarcode();
+
+                // Generate Unique
+                while (BookAsset::withTrashed()->where('asset_code', $assetCode)->exists()) {
+                    $assetCode = $this->generateAssetBarcode();
+                }
             }
+
+            $asset = BookAsset::create([
+                'book_title_id' => $bookTitle->id,
+                'asset_code' => $assetCode,
+                'building' => 'Main Library', // Default building
+                'aisle' => null,
+                'shelf' => $location, // Map location input to shelf
+                'status' => $status
+            ]);
+            $createdAssets[] = $asset;
         }
 
-        $fields['asset_code'] = $assetCode;
-        $fields['status'] = 'available';
-
-        // Remove accession_no from fields as it's not a column
-        unset($fields['accession_no']);
-
-        return BookAsset::create($fields);
+        return $createdAssets;
     }
+
+
     // NEW: Dashboard Statistics
     public function dashboardStats()
     {
         $totalTitles = \App\Models\BookTitle::count();
-        $totalCopies = \App\Models\BookAsset::count();
+        // Physical Copies Breakdown
+        $physicalCopiesStats = \App\Models\BookAsset::selectRaw('status, count(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status')
+            ->toArray();
+
+        // Ensure all keys exist
+        $availableCopies = $physicalCopiesStats['available'] ?? 0;
+        $borrowedCopies = $physicalCopiesStats['borrowed'] ?? 0;
+        $damagedCopies = $physicalCopiesStats['damaged'] ?? 0;
+        $lostCopies = $physicalCopiesStats['lost'] ?? 0;
+
+        // Recalculate total to be safe (or just use sum)
+        $totalCopies = $availableCopies + $borrowedCopies + $damagedCopies + $lostCopies;
 
         // Count active transactions (where 'returned_at' is null)
         $activeLoans = \App\Models\Transaction::whereNull('returned_at')->count();
@@ -361,6 +423,12 @@ public function index(Request $request)
         return response()->json([
             'titles' => $totalTitles,
             'copies' => $totalCopies,
+            'copies_breakdown' => [
+                'available' => $availableCopies,
+                'borrowed' => $borrowedCopies,
+                'damaged' => $damagedCopies,
+                'lost' => $lostCopies
+            ],
             'loans' => $activeLoans,
             'overdue' => $overdueLoans,
             'students' => $totalStudents,
@@ -375,32 +443,7 @@ public function index(Request $request)
         if (!$book)
             return response()->json(['message' => 'Not found'], 404);
 
-        $fields = $request->validate([
-            'title' => 'required|string|max:255|unique:book_titles,title,' . $id,
-            'subtitle' => 'nullable|string|max:255',
-            'author' => 'required|string|max:255',
-            'category' => 'required|string|max:100',
-            'isbn' => 'nullable|string|max:50',
-            'lccn' => 'nullable|string|max:50',
-            'issn' => 'nullable|string|max:50',
-            'publisher' => 'nullable|string|max:255',
-            'place_of_publication' => 'nullable|string|max:255',
-            'published_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
-            'copyright_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
-            'call_number' => 'nullable|string|max:100',
-            'physical_description' => 'nullable|string',
-            'pages' => 'nullable|integer|min:1',
-            'edition' => 'nullable|string|max:50',
-            'series' => 'nullable|string|max:255',
-            'volume' => 'nullable|string|max:50',
-            'price' => 'nullable|numeric|min:0',
-            'book_penalty' => 'nullable|numeric|min:0',
-            'language' => 'nullable|string|max:50',
-            'description' => 'nullable|string',
-            'location' => 'nullable|string|max:255',
-            'accession_no' => 'nullable|string|max:50',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120'
-        ]);
+        $fields = $request->validated();
 
         // Handle image upload
         if ($request->hasFile('image')) {
@@ -424,9 +467,35 @@ public function index(Request $request)
 
         // Remove 'image' from fields as it's handled separately
         unset($fields['image']);
+        // Remove copy-related fields — these are NOT columns on book_titles
+        unset($fields['added_copies']);
+        unset($fields['is_damaged_copies']);
 
         $book->update($fields);
-        return response()->json($book);
+
+        // Handle adding new copies
+        $addedCopiesCount = 0;
+        try {
+            if ($request->filled('added_copies') && (int) $request->input('added_copies') > 0) {
+                $count = (int) $request->input('added_copies');
+                $status = $request->boolean('is_damaged_copies') ? 'damaged' : 'available';
+
+                $this->generateBookAssets($book, $count, null, $book->location, $status);
+                $addedCopiesCount = $count;
+            }
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Book details updated, but failed to add copies: ' . $e->getMessage(),
+                'book' => $book,
+                'added_copies' => 0
+            ], 500);
+        }
+
+        return response()->json([
+            'message' => 'Book updated successfully' . ($addedCopiesCount > 0 ? " ($addedCopiesCount copies added)" : ''),
+            'book' => $book,
+            'added_copies' => $addedCopiesCount
+        ]);
     }
 
     // DELETE a book
@@ -438,6 +507,12 @@ public function index(Request $request)
 
         // Create a transaction record for each asset to log the deletion
         foreach ($book->assets as $asset) {
+            // Rename the asset code to free it up for reuse
+            // Appends -DEL-{timestamp} to avoid unique constraint violations
+            $originalCode = $asset->asset_code;
+            $asset->asset_code = $originalCode . '-DEL-' . time();
+            $asset->save();
+
             \App\Models\Transaction::create([
                 'user_id' => auth()->id(), // Admin who deleted it
                 'book_asset_id' => $asset->id,
@@ -449,7 +524,7 @@ public function index(Request $request)
                 'payment_status' => 'paid', // Or 'waived', just to not show as fine
                 'remarks' => 'Book Deleted'
             ]);
-            
+
             // Also delete the asset to keep things clean (optional but recommended)
             $asset->delete();
         }
@@ -555,6 +630,85 @@ public function index(Request $request)
         return response()->json($availableBooks);
     }
 
+    /**
+     * GET AVAILABLE BOOKS — Paginated Catalog for Browse Modal.
+     * Returns ONE entry per BookTitle with available copy count,
+     * instead of listing every individual copy separately.
+     * Supports server-side search, category filter, and pagination.
+     */
+    public function getAvailableBooksPagedCatalog(Request $request)
+    {
+        $perPage = min((int) $request->input('per_page', 18), 100);
+        $search = $request->input('search');
+        $category = $request->input('category');
+
+        $query = BookTitle::withCount([
+            'assets as available_copies' => function ($q) {
+                $q->where('status', 'available');
+            },
+            'assets as total_copies',
+        ])
+            ->having('available_copies', '>', 0);
+
+        // Server-side search across title, author, ISBN, call number
+        if ($search) {
+            $sanitized = addcslashes($search, '%_');
+            $query->where(function ($q) use ($sanitized) {
+                $q->where('title', 'like', "%{$sanitized}%")
+                    ->orWhere('author', 'like', "%{$sanitized}%")
+                    ->orWhere('isbn', 'like', "%{$sanitized}%")
+                    ->orWhere('call_number', 'like', "%{$sanitized}%");
+            });
+        }
+
+        // Server-side category filter
+        if ($category && $category !== 'All') {
+            $query->where('category', $category);
+        }
+
+        $paginated = $query->orderBy('title')->paginate($perPage);
+
+        // Transform: attach the first available asset_code for auto-selection
+        $paginated->getCollection()->transform(function ($bookTitle) {
+            $firstAvailable = $bookTitle->assets()
+                ->where('status', 'available')
+                ->orderBy('asset_code')
+                ->first();
+
+            return [
+                'id' => $bookTitle->id,
+                'title' => $bookTitle->title,
+                'subtitle' => $bookTitle->subtitle,
+                'author' => $bookTitle->author,
+                'isbn' => $bookTitle->isbn,
+                'call_number' => $bookTitle->call_number,
+                'category' => $bookTitle->category ?? '',
+                'image_path' => $bookTitle->image_path,
+                'available_copies' => $bookTitle->available_copies,
+                'total_copies' => $bookTitle->total_copies,
+                'asset_code' => $firstAvailable->asset_code ?? null,
+                'status' => 'available',
+            ];
+        });
+
+        // Get distinct categories for the filter pills
+        $categories = BookTitle::whereHas('assets', function ($q) {
+            $q->where('status', 'available');
+        })
+            ->whereNotNull('category')
+            ->where('category', '!=', '')
+            ->distinct()
+            ->orderBy('category')
+            ->pluck('category')
+            ->prepend('All')
+            ->values();
+
+        return response()->json([
+            'books' => $paginated,
+            'categories' => $categories,
+        ]);
+    }
+
     // GET BORROWED BOOKS (for return dropdown)
     public function getBorrowedBooks(Request $request)
     {
@@ -587,11 +741,11 @@ public function index(Request $request)
             'bookTitle:id,title,author,image_path',
             'transactions' => function ($query) {
                 $query->whereNull('returned_at')
-                      ->with('user:id,name,student_id');
+                    ->with('user:id,name,student_id');
             },
             'facultyTransactions' => function ($query) {
                 $query->whereNull('returned_at')
-                      ->with('faculty:id,faculty_id,name');
+                    ->with('faculty:id,faculty_id,name');
             }
         ])
             ->orderBy('asset_code')
@@ -601,7 +755,7 @@ public function index(Request $request)
                 if ($type === 'student') {
                     $transaction = $asset->transactions->first();
                     if ($transaction && $transaction->user) {
-                         return [
+                        return [
                             'asset_code' => $asset->asset_code,
                             'status' => $asset->status,
                             'title' => $asset->bookTitle->title ?? 'Unknown',
@@ -636,7 +790,7 @@ public function index(Request $request)
                             'is_overdue' => $facultyTrans->due_date ? now()->gt($facultyTrans->due_date) : false
                         ];
                     }
-                     return null;
+                    return null;
                 }
 
                 // Fallback (Mixed/No Type): Try student first, then faculty
@@ -685,6 +839,116 @@ public function index(Request $request)
         return response()->json($borrowedBooks);
     }
 
+    /**
+     * GET BORROWED BOOKS — Paginated Catalog for Return Modal.
+     * Supports server-side search and pagination for the return book selector.
+     */
+    public function getBorrowedBooksPagedCatalog(Request $request)
+    {
+        $perPage = min((int) $request->input('per_page', 18), 100);
+        $search = $request->input('search');
+        $type = $request->input('type', 'student'); // 'student' or 'faculty'
+
+        $query = BookAsset::where('status', 'borrowed')
+            ->whereHas('bookTitle');
+
+        // Type-specific filtering
+        if ($type === 'student') {
+            $query->whereHas('transactions', function ($q) {
+                $q->whereNull('returned_at');
+            });
+        } elseif ($type === 'faculty') {
+            $query->whereHas('facultyTransactions', function ($q) {
+                $q->whereNull('returned_at');
+            });
+        }
+
+        // Server-side search across title, author, asset_code, and borrower name
+        if ($search) {
+            $sanitized = addcslashes($search, '%_');
+            $query->where(function ($q) use ($sanitized, $type) {
+                $q->where('asset_code', 'like', "%{$sanitized}%")
+                    ->orWhereHas('bookTitle', function ($bq) use ($sanitized) {
+                        $bq->where('title', 'like', "%{$sanitized}%")
+                            ->orWhere('author', 'like', "%{$sanitized}%");
+                    });
+
+                // Also search by borrower name
+                if ($type === 'student') {
+                    $q->orWhereHas('transactions', function ($tq) use ($sanitized) {
+                        $tq->whereNull('returned_at')
+                            ->whereHas('user', function ($uq) use ($sanitized) {
+                                $uq->where('name', 'like', "%{$sanitized}%");
+                            });
+                    });
+                } elseif ($type === 'faculty') {
+                    $q->orWhereHas('facultyTransactions', function ($tq) use ($sanitized) {
+                        $tq->whereNull('returned_at')
+                            ->whereHas('faculty', function ($fq) use ($sanitized) {
+                                $fq->where('name', 'like', "%{$sanitized}%");
+                            });
+                    });
+                }
+            });
+        }
+
+        $paginated = $query->with([
+            'bookTitle:id,title,author,image_path,category',
+            'transactions' => function ($q) {
+                $q->whereNull('returned_at')->with('user:id,name,student_id');
+            },
+            'facultyTransactions' => function ($q) {
+                $q->whereNull('returned_at')->with('faculty:id,faculty_id,name');
+            }
+        ])
+            ->orderBy('asset_code')
+            ->paginate($perPage);
+
+        // Transform paginated data
+        $paginated->getCollection()->transform(function ($asset) use ($type) {
+            $borrower = 'Unknown';
+            $studentId = 'N/A';
+            $dueDate = null;
+            $isOverdue = false;
+
+            if ($type === 'student') {
+                $tx = $asset->transactions->first();
+                if ($tx && $tx->user) {
+                    $borrower = $tx->user->name;
+                    $studentId = $tx->user->student_id ?? 'N/A';
+                    $dueDate = $tx->due_date;
+                    $isOverdue = $tx->due_date ? now()->gt($tx->due_date) : false;
+                }
+            } else {
+                $tx = $asset->facultyTransactions->first();
+                if ($tx && $tx->faculty) {
+                    $borrower = $tx->faculty->name;
+                    $studentId = $tx->faculty->faculty_id ?? 'N/A';
+                    $dueDate = $tx->due_date;
+                    $isOverdue = $tx->due_date ? now()->gt($tx->due_date) : false;
+                }
+            }
+
+            return [
+                'asset_code' => $asset->asset_code,
+                'status' => $asset->status,
+                'title' => $asset->bookTitle->title ?? 'Unknown',
+                'author' => $asset->bookTitle->author ?? 'Unknown',
+                'image_path' => $asset->bookTitle->image_path ?? null,
+                'category' => $asset->bookTitle->category ?? '',
+                'borrower' => $borrower,
+                'student_id' => $studentId,
+                'type' => $type === 'student' ? 'Student' : 'Faculty',
+                'due_date' => $dueDate,
+                'is_overdue' => $isOverdue,
+            ];
+        });
+
+        return response()->json([
+            'books' => $paginated,
+        ]);
+    }
+
     // CHECK STUDENT CLEARANCE (for borrowing validation)
     public function checkClearance($studentId)
     {
@@ -711,7 +975,7 @@ public function index(Request $request)
         $hasLostBooks = \App\Models\Transaction::where('user_id', $student->id)
             ->where('payment_status', 'pending')
             ->where('penalty_amount', '>', 0)
-            ->whereHas('bookAsset', function($q) {
+            ->whereHas('bookAsset', function ($q) {
                 $q->where('status', 'lost');
             })
             ->exists();
@@ -864,60 +1128,60 @@ public function index(Request $request)
             if ($borrowedAsset) {
                 // Has a borrowed copy - return that asset with borrower info
                 $response = [
-                'found' => true,
-                'asset_code' => $borrowedAsset->asset_code,
-                'status' => 'borrowed',
-                'title' => $bookTitle->title,
-                'author' => $bookTitle->author,
-                'category' => $bookTitle->category,
-                'publisher' => $bookTitle->publisher,
-                'published_year' => $bookTitle->published_year,
-                'call_number' => $bookTitle->call_number,
-                'pages' => $bookTitle->pages,
-                'language' => $bookTitle->language,
-                'description' => $bookTitle->description,
-                'image_path' => $bookTitle->image_path,
-                'isbn' => $bookTitle->isbn,
-                'location' => trim($borrowedAsset->building . ' - ' . $borrowedAsset->aisle . ' - ' . $borrowedAsset->shelf, ' -') ?: ($bookTitle->location ?? 'N/A'),
-                'borrower' => null,
-                'due_date' => null,
-                'is_overdue' => false
-            ];
-
-            $transaction = \App\Models\Transaction::where('book_asset_id', $borrowedAsset->id)
-                ->whereNull('returned_at')
-                ->with('user:id,name,student_id,course')
-                ->first();
-
-            if ($transaction) {
-                $response['borrower'] = [
-                    'name' => $transaction->user->name,
-                    'student_id' => $transaction->user->student_id,
-                    'course' => $transaction->user->course,
-                    'type' => 'Student'
+                    'found' => true,
+                    'asset_code' => $borrowedAsset->asset_code,
+                    'status' => 'borrowed',
+                    'title' => $bookTitle->title,
+                    'author' => $bookTitle->author,
+                    'category' => $bookTitle->category,
+                    'publisher' => $bookTitle->publisher,
+                    'published_year' => $bookTitle->published_year,
+                    'call_number' => $bookTitle->call_number,
+                    'pages' => $bookTitle->pages,
+                    'language' => $bookTitle->language,
+                    'description' => $bookTitle->description,
+                    'image_path' => $bookTitle->image_path,
+                    'isbn' => $bookTitle->isbn,
+                    'location' => trim($borrowedAsset->building . ' - ' . $borrowedAsset->aisle . ' - ' . $borrowedAsset->shelf, ' -') ?: ($bookTitle->location ?? 'N/A'),
+                    'borrower' => null,
+                    'due_date' => null,
+                    'is_overdue' => false
                 ];
-                $response['due_date'] = $transaction->due_date;
-                $response['is_overdue'] = now()->gt($transaction->due_date);
-            } else {
-                // Try Faculty Transaction
-                $facultyTrans = \App\Models\FacultyTransaction::where('book_asset_id', $borrowedAsset->id)
+
+                $transaction = \App\Models\Transaction::where('book_asset_id', $borrowedAsset->id)
                     ->whereNull('returned_at')
-                    ->with('faculty')
+                    ->with('user:id,name,student_id,course')
                     ->first();
 
-                if ($facultyTrans) {
+                if ($transaction) {
                     $response['borrower'] = [
-                        'name' => $facultyTrans->faculty->name,
-                        'student_id' => $facultyTrans->faculty->faculty_id,
-                        'course' => $facultyTrans->faculty->department,
-                        'type' => 'Faculty'
+                        'name' => $transaction->user->name,
+                        'student_id' => $transaction->user->student_id,
+                        'course' => $transaction->user->course,
+                        'type' => 'Student'
                     ];
-                    $response['due_date'] = $facultyTrans->due_date;
-                    $response['is_overdue'] = $facultyTrans->due_date ? now()->gt($facultyTrans->due_date) : false;
-                }
-            }
+                    $response['due_date'] = $transaction->due_date;
+                    $response['is_overdue'] = now()->gt($transaction->due_date);
+                } else {
+                    // Try Faculty Transaction
+                    $facultyTrans = \App\Models\FacultyTransaction::where('book_asset_id', $borrowedAsset->id)
+                        ->whereNull('returned_at')
+                        ->with('faculty')
+                        ->first();
 
-            return response()->json($response);
+                    if ($facultyTrans) {
+                        $response['borrower'] = [
+                            'name' => $facultyTrans->faculty->name,
+                            'student_id' => $facultyTrans->faculty->faculty_id,
+                            'course' => $facultyTrans->faculty->department,
+                            'type' => 'Faculty'
+                        ];
+                        $response['due_date'] = $facultyTrans->due_date;
+                        $response['is_overdue'] = $facultyTrans->due_date ? now()->gt($facultyTrans->due_date) : false;
+                    }
+                }
+
+                return response()->json($response);
             }
 
             // Book title exists but no physical copies yet
@@ -989,9 +1253,11 @@ public function index(Request $request)
 
         // If there is a transaction with a penalty that hasn't been paid/waived
         // STRICT CHECK: The PAYMENT STATUS must be 'paid' or 'waived'
-        if ($latestTransaction && $latestTransaction->penalty_amount > 0 && 
-            !in_array($latestTransaction->payment_status, ['paid', 'waived'])) {
-            
+        if (
+            $latestTransaction && $latestTransaction->penalty_amount > 0 &&
+            !in_array($latestTransaction->payment_status, ['paid', 'waived'])
+        ) {
+
             return response()->json([
                 'message' => 'Cannot restore book. The lost book fine must be settled first.',
                 'error' => 'unpaid_fine',
@@ -1025,11 +1291,11 @@ public function index(Request $request)
     {
         // Try to find asset by ID first, then by asset_code
         $asset = null;
-        
+
         if ($id) {
             $asset = BookAsset::find($id);
         }
-        
+
         if (!$asset && $request->has('asset_code')) {
             $asset = BookAsset::where('asset_code', $request->asset_code)->first();
         }
@@ -1088,14 +1354,14 @@ public function index(Request $request)
             category,
             COUNT(*) as total_books
         ')
-        ->groupBy('category')
-        ->orderBy('category')
-        ->get();
+            ->groupBy('category')
+            ->orderBy('category')
+            ->get();
 
         // 2. Available titles per category — titles that have at least one available asset (1 query)
         $availableTitles = BookTitle::whereHas('assets', function ($q) {
-                $q->where('status', 'available');
-            })
+            $q->where('status', 'available');
+        })
             ->selectRaw('category, COUNT(*) as cnt')
             ->groupBy('category')
             ->pluck('cnt', 'category');
@@ -1135,9 +1401,11 @@ public function index(Request $request)
         $search = $request->input('search', '');
 
         $query = BookTitle::where('category', $category)
-            ->with(['assets' => function ($q) {
-                $q->orderBy('asset_code');
-            }])
+            ->with([
+                'assets' => function ($q) {
+                    $q->orderBy('asset_code');
+                }
+            ])
             ->withCount([
                 'assets as available_copies' => function ($query) {
                     $query->where('status', 'available');
@@ -1158,9 +1426,9 @@ public function index(Request $request)
         if ($search) {
             $query->where(function ($q) use ($search) {
                 $q->where('title', 'like', "%{$search}%")
-                  ->orWhere('author', 'like', "%{$search}%")
-                  ->orWhere('isbn', 'like', "%{$search}%")
-                  ->orWhere('call_number', 'like', "%{$search}%");
+                    ->orWhere('author', 'like', "%{$search}%")
+                    ->orWhere('isbn', 'like', "%{$search}%")
+                    ->orWhere('call_number', 'like', "%{$search}%");
             });
         }
 

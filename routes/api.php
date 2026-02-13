@@ -50,7 +50,9 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     // Book & Student routes secured (contain PII)
     Route::get('/books', [BookController::class, 'index']);
     Route::get('/books/available', [BookController::class, 'getAvailableBooks']);
+    Route::get('/books/available/catalog', [BookController::class, 'getAvailableBooksPagedCatalog']);
     Route::get('/books/borrowed', [BookController::class, 'getBorrowedBooks']);
+    Route::get('/books/borrowed/catalog', [BookController::class, 'getBorrowedBooksPagedCatalog']);
     Route::get('/students/{studentId}/clearance', [BookController::class, 'checkClearance']);
 
     // Auth
@@ -68,8 +70,9 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
 
     // Book Management
     Route::post('/books/title', [BookController::class, 'storeTitle']);
-    Route::post('/books/asset', [BookController::class, 'storeAsset']);
+
     Route::get('/books/next-accession', [BookController::class, 'getNextAccession']);
+    Route::get('/books/check-accession', [BookController::class, 'checkAccession']);
     Route::get('/books/random-barcode', [BookController::class, 'generateRandomBarcode']);
     Route::get('/books/lost', [BookController::class, 'getLostBooks']); // NEW
     Route::post('/books/assets/{id}/restore', [BookController::class, 'restoreBook']); // NEW
@@ -183,12 +186,14 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     | Admin-Only Routes (Role Check: admin)
     |--------------------------------------------------------------------------
     */
-    Route::group(['middleware' => function (Request $request, \Closure $next) {
-        if ($request->user()->role !== 'admin') {
-            abort(403, 'Forbidden. Admin access only.');
+    Route::group([
+        'middleware' => function (Request $request, \Closure $next) {
+            if ($request->user()->role !== 'admin') {
+                abort(403, 'Forbidden. Admin access only.');
+            }
+            return $next($request);
         }
-        return $next($request);
-    }], function () {
+    ], function () {
         Route::post('/settings/reset', [SettingController::class, 'reset']);
         Route::delete('/transactions/{id}/force', [TransactionController::class, 'forceDelete']);
         Route::delete('/students/{id}', [App\Http\Controllers\StudentController::class, 'destroy']);

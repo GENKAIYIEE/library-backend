@@ -22,5 +22,9 @@ class DatabaseSeeder extends Seeder
             'username' => 'admin',
             'permissions' => 'full_access'
         ]);
+
+        $this->call([
+            BookSeeder::class,
+        ]);
     }
 }

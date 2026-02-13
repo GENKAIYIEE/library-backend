@@ -143,6 +143,9 @@ class UserController extends Controller
 
         $query = User::query();
 
+        // EXCLUDE STUDENTS - User Management is for Admins/Staff only
+        $query->where('role', '!=', 'student');
+
         // Filter by role if provided
         if ($role) {
             $query->where('role', $role);

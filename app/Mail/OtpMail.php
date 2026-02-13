@@ -30,7 +30,8 @@ class OtpMail extends Mailable
      */
     public function build()
     {
-        return $this->subject('Your Password Reset OTP')
+        return $this->from(config('mail.from.address'), 'Polytechnic College of La Union - College Library')
+            ->subject('Your Password Reset OTP')
             ->view('emails.otp');
     }
 }

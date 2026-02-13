@@ -18,7 +18,7 @@
         <p>This OTP is valid for 10 minutes.</p>
         <p>If you did not request a password reset, no further action is required.</p>
         <br>
-        <p>Regards,<br>{{ config('app.name') }}</p>
+        <p>Regards,<br>Polytechnic College of La Union - College Library</p>
     </div>
 </body>
 

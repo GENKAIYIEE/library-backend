@@ -7,8 +7,10 @@ use App\Models\User;
 use App\Models\Transaction;
 use App\Models\BookAsset;
 use App\Models\BookTitle;
+use App\Models\LibrarySetting;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
 
 class StudentController extends Controller
 {
@@ -302,16 +304,38 @@ class StudentController extends Controller
             return response()->json(['message' => 'Student not found'], 404);
         }
 
-        // Calculate Stats — each uses a fresh query to avoid shallow-clone mutation
+        $finePerDay = LibrarySetting::getFinePerDay();
+
+        // Calculate accrued fines for overdue unreturned books
+        $overdueUnreturned = Transaction::where('user_id', $id)
+            ->whereNull('returned_at')
+            ->where('due_date', '<', Carbon::today())
+            ->get();
+
+        $accruedFines = 0;
+        foreach ($overdueUnreturned as $tx) {
+            $daysOverdue = (int) Carbon::parse($tx->due_date)->startOfDay()->diffInDays(Carbon::today());
+            $accruedFines += $daysOverdue * $finePerDay;
+        }
+
+        $pendingFines = (float) Transaction::where('user_id', $id)
+            ->where('payment_status', 'pending')
+            ->where('penalty_amount', '>', 0)
+            ->sum('penalty_amount');
+
+        // Calculate Stats
         $stats = [
             'totalBorrowed' => Transaction::where('user_id', $id)->count(),
             'currentLoans' => Transaction::where('user_id', $id)->whereNull('returned_at')->count(),
-            'overdueCount' => Transaction::where('user_id', $id)->whereNull('returned_at')->where('due_date', '<', now())->count(),
-            'totalFines' => Transaction::where('user_id', $id)->sum('penalty_amount'),
-            'pendingFines' => Transaction::where('user_id', $id)->where('payment_status', 'pending')->where('penalty_amount', '>', 0)->sum('penalty_amount')
+            'overdueCount' => $overdueUnreturned->count(),
+            'totalFines' => (float) Transaction::where('user_id', $id)->sum('penalty_amount'),
+            'pendingFines' => $pendingFines,
+            'accruedFines' => (float) $accruedFines,
+            'totalOwed' => (float) ($pendingFines + $accruedFines),
+            'finePerDay' => (float) $finePerDay,
         ];
 
-        // Get Paginated Transactions
+        // Get Paginated Transactions with computed overdue fields
         $transactions = Transaction::where('user_id', $id)
             ->join('book_assets', 'transactions.book_asset_id', '=', 'book_assets.id')
             ->join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
@@ -321,7 +345,26 @@ class StudentController extends Controller
                 'book_assets.asset_code'
             )
             ->orderBy('transactions.created_at', 'desc')
-            ->paginate(10); // 10 items per page
+            ->paginate(10);
+
+        // Add computed is_overdue, days_overdue, accrued_fine per transaction
+        $transactions->getCollection()->transform(function ($tx) use ($finePerDay) {
+            $isOverdue = false;
+            $daysOverdue = 0;
+            $accruedFine = 0;
+
+            if (!$tx->returned_at && $tx->due_date && Carbon::parse($tx->due_date)->startOfDay()->lt(Carbon::today())) {
+                $isOverdue = true;
+                $daysOverdue = (int) Carbon::parse($tx->due_date)->startOfDay()->diffInDays(Carbon::today());
+                $accruedFine = (float) ($daysOverdue * $finePerDay);
+            }
+
+            $tx->is_overdue = $isOverdue;
+            $tx->days_overdue = $daysOverdue;
+            $tx->accrued_fine = $accruedFine;
+
+            return $tx;
+        });
 
         return response()->json([
             'transactions' => $transactions,
@@ -480,6 +523,72 @@ class StudentController extends Controller
     }
 
     /**
+     * Server-side paginated student search.
+     * Used by StudentSearchModal and any component that needs to search students
+     * without loading the entire student list into memory.
+     *
+     * GET /students/search?q=query&per_page=15&page=1
+     */
+    public function search(Request $request)
+    {
+        $query = $request->input('q', '');
+        $perPage = (int) $request->input('per_page', 15);
+
+        $builder = User::where('role', 'student');
+
+        if (strlen($query) >= 1) {
+            $builder->where(function ($q) use ($query) {
+                $q->where('name', 'like', "%{$query}%")
+                    ->orWhere('student_id', 'like', "%{$query}%")
+                    ->orWhere('email', 'like', "%{$query}%")
+                    ->orWhere('course', 'like', "%{$query}%");
+            });
+        }
+
+        $students = $builder
+            ->select('id', 'name', 'student_id', 'course', 'year_level', 'section', 'email', 'phone_number')
+            ->orderBy('name')
+            ->paginate($perPage);
+
+        return response()->json($students);
+    }
+
+    /**
+     * Lightweight student count endpoint.
+     * Returns only the total number of students — avoids loading all records.
+     *
+     * GET /students/count
+     */
+    public function count()
+    {
+        $count = User::where('role', 'student')->count();
+        return response()->json(['count' => $count]);
+    }
+
+    /**
+     * Find a single student by their student_id.
+     * Used for real-time auto-fill in Circulation when typing a student ID.
+     *
+     * GET /students/lookup/{studentId}
+     */
+    public function findByStudentId($studentId)
+    {
+        $student = User::where('role', 'student')
+            ->where('student_id', $studentId)
+            ->select('id', 'name', 'student_id', 'course', 'year_level', 'section', 'email', 'phone_number')
+            ->first();
+
+        if (!$student) {
+            return response()->json(['found' => false], 200);
+        }
+
+        return response()->json([
+            'found' => true,
+            'student' => $student
+        ]);
+    }
+
+    /**
      * Get course summary with student counts.
      * Returns all unique courses with total students count.
      */
@@ -537,8 +646,8 @@ class StudentController extends Controller
         if ($search) {
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('student_id', 'like', "%{$search}%")
-                  ->orWhere('email', 'like', "%{$search}%");
+                    ->orWhere('student_id', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
             });
         }
 

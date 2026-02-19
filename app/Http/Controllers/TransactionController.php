@@ -168,7 +168,8 @@ class TransactionController extends Controller
                 'message' => 'Book returned successfully',
                 'days_late' => $daysLate,
                 'penalty' => $penalty,
-                'transaction' => $transaction->load('user')
+                'fine_per_day' => $penalty > 0 ? $this->getFinePerDay() : 0,
+                'transaction' => $transaction->load(['user', 'bookAsset.bookTitle'])
             ]);
 
         } catch (\Exception $e) {

@@ -116,6 +116,7 @@ class UpdateBookTitleRequest extends FormRequest
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120',
             'added_copies' => 'nullable|integer|min:1',
             'is_damaged_copies' => 'nullable|boolean',
+            'new_copies_accession' => 'nullable|string|max:100',
         ];
     }
 

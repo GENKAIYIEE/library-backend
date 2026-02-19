@@ -45,16 +45,45 @@ class TransactionController extends Controller
             $student = \App\Models\User::where('student_id', $request->student_id)->first();
             $bookAsset = \App\Models\BookAsset::where('asset_code', $request->asset_code)->first();
 
-            // 3. CLEARANCE CHECK: Block if student has pending fines
+            // 3. CLEARANCE CHECK: Block if student has pending fines OR overdue unreturned books
             $pendingFines = Transaction::where('user_id', $student->id)
                 ->where('payment_status', 'pending')
+                ->where('penalty_amount', '>', 0)
                 ->sum('penalty_amount');
 
-            if ($pendingFines > 0) {
+            // Check for overdue unreturned books and calculate accrued fines
+            $finePerDay = $this->getFinePerDay();
+            $overdueTransactions = Transaction::where('user_id', $student->id)
+                ->whereNull('returned_at')
+                ->where('due_date', '<', Carbon::today())
+                ->get();
+
+            $accruedFines = 0;
+            foreach ($overdueTransactions as $tx) {
+                $daysOverdue = Carbon::parse($tx->due_date)->startOfDay()->diffInDays(Carbon::today());
+                $accruedFines += $daysOverdue * $finePerDay;
+            }
+
+            $totalOwed = $pendingFines + $accruedFines;
+            $overdueCount = $overdueTransactions->count();
+
+            if ($totalOwed > 0 || $overdueCount > 0) {
+                $message = 'Student cannot borrow.';
+                if ($overdueCount > 0) {
+                    $message = "Student has {$overdueCount} overdue book(s) with accruing fine of ₱" . number_format($accruedFines, 2) . '.';
+                }
+                if ($pendingFines > 0) {
+                    $message .= " Pending fines: ₱" . number_format($pendingFines, 2) . '.';
+                }
+                $message .= ' Please settle before borrowing.';
+
                 return response()->json([
-                    'message' => 'Student has pending fines of ₱' . number_format($pendingFines, 2) . '. Please settle before borrowing.',
+                    'message' => $message,
                     'blocked' => true,
-                    'pending_fines' => $pendingFines
+                    'pending_fines' => (float) $pendingFines,
+                    'accrued_fines' => (float) $accruedFines,
+                    'total_owed' => (float) $totalOwed,
+                    'overdue_books' => $overdueCount
                 ], 403);
             }
 
@@ -135,21 +164,18 @@ class TransactionController extends Controller
                 return response()->json(['message' => 'This book is not currently borrowed!'], 400);
             }
 
-            // 3. Check for Late Return (Strict Day Comparison)
-            $now = Carbon::now();
-            $dueDate = Carbon::parse($transaction->due_date)->endOfDay(); // End of due date (23:59:59)
+            // 3. Check for Late Return (Day-level comparison)
+            // If today is after the due date, the student is late.
+            // Example: due_date = Feb 19, returned on Feb 20 = 1 day late.
+            $today = Carbon::today(); // midnight today
+            $dueDateDay = Carbon::parse($transaction->due_date)->startOfDay();
 
             $penalty = 0;
             $daysLate = 0;
 
-            // If 'Now' is strictly after Due Date
-            if ($now->gt($dueDate)) {
-                // Calculate full days difference
-                // We use startOfDay to compare "dates" regardless of "time"
-                $diffInDays = $dueDate->startOfDay()->diffInDays($now->startOfDay());
-                $daysLate = $diffInDays;
-
-                $finePerDay = $this->getFinePerDay(); // Dynamic rate from settings
+            if ($today->gt($dueDateDay)) {
+                $daysLate = (int) $dueDateDay->diffInDays($today);
+                $finePerDay = $this->getFinePerDay();
                 $penalty = $daysLate * $finePerDay;
             }
 

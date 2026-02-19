@@ -109,6 +109,12 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::put('/students/{id}', [App\Http\Controllers\StudentController::class, 'update']);
 
     Route::post('/students/batch', [App\Http\Controllers\StudentController::class, 'batchStore']);
+
+    // Server-side student search, count, and lookup (pagination-safe)
+    Route::get('/students/search', [App\Http\Controllers\StudentController::class, 'search']);
+    Route::get('/students/count', [App\Http\Controllers\StudentController::class, 'count']);
+    Route::get('/students/lookup/{studentId}', [App\Http\Controllers\StudentController::class, 'findByStudentId']);
+
     Route::get('/students/{id}/history', [App\Http\Controllers\StudentController::class, 'history']);
 
     // Course-Based Student Navigation

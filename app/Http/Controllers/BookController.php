@@ -9,6 +9,7 @@ use App\Models\LibrarySetting;
 use App\Services\GoogleBooksService;
 use App\Http\Requests\StoreBookTitleRequest;
 use App\Http\Requests\UpdateBookTitleRequest;
+use Carbon\Carbon;
 
 class BookController extends Controller
 {
@@ -99,12 +100,14 @@ class BookController extends Controller
     }
 
     /**
-     * Generate the next accession number for book titles.
+     * Internal helper: compute the next available accession number string.
      * Format: LIB-YYYY-XXXX (e.g., LIB-2026-0001)
-     * 
-     * @return \Illuminate\Http\JsonResponse
+     *
+     * Checks both LIB- and legacy BOOK- prefixes to avoid collisions.
+     *
+     * @return string  The next accession number ready to be assigned.
      */
-    public function getNextAccession()
+    private function getNextAccessionBase(): string
     {
         $year = date('Y');
         $prefix = 'LIB-' . $year . '-';
@@ -132,12 +135,27 @@ class BookController extends Controller
             $nextSequence = max($nextSequence, $lastBookSequence + 1);
         }
 
-        // Format with leading zeros (4 digits)
-        $accessionNumber = $prefix . str_pad($nextSequence, 4, '0', STR_PAD_LEFT);
+        return $prefix . str_pad($nextSequence, 4, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Public API endpoint: return the next accession number.
+     * Delegates to getNextAccessionBase().
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getNextAccession()
+    {
+        $accessionNumber = $this->getNextAccessionBase();
+
+        // Extract sequence and year for the JSON response
+        $year = date('Y');
+        $prefix = 'LIB-' . $year . '-';
+        $sequence = (int) substr($accessionNumber, strlen($prefix));
 
         return response()->json([
             'accession_number' => $accessionNumber,
-            'sequence' => $nextSequence,
+            'sequence' => $sequence,
             'year' => $year
         ]);
     }
@@ -487,18 +505,27 @@ class BookController extends Controller
         // Remove copy-related fields — these are NOT columns on book_titles
         unset($fields['added_copies']);
         unset($fields['is_damaged_copies']);
+        unset($fields['new_copies_accession']);
 
         $book->update($fields);
 
         // Handle adding new copies
         $addedCopiesCount = 0;
+        $assignedAccessions = [];
         try {
             if ($request->filled('added_copies') && (int) $request->input('added_copies') > 0) {
                 $count = (int) $request->input('added_copies');
                 $status = $request->boolean('is_damaged_copies') ? 'damaged' : 'available';
 
-                $this->generateBookAssets($book, $count, null, $book->location, $status);
+                // Use user-provided accession number if supplied;
+                // otherwise auto-generate the next LIB-YYYY-XXXX
+                $baseAccession = $request->filled('new_copies_accession')
+                    ? trim($request->input('new_copies_accession'))
+                    : $this->getNextAccessionBase();
+
+                $createdAssets = $this->generateBookAssets($book, $count, $baseAccession, $book->location, $status);
                 $addedCopiesCount = $count;
+                $assignedAccessions = array_map(fn($a) => $a->asset_code, $createdAssets);
             }
         } catch (\Exception $e) {
             return response()->json([
@@ -511,7 +538,8 @@ class BookController extends Controller
         return response()->json([
             'message' => 'Book updated successfully' . ($addedCopiesCount > 0 ? " ($addedCopiesCount copies added)" : ''),
             'book' => $book,
-            'added_copies' => $addedCopiesCount
+            'added_copies' => $addedCopiesCount,
+            'assigned_accessions' => $assignedAccessions
         ]);
     }
 
@@ -977,6 +1005,7 @@ class BookController extends Controller
 
         $pendingFines = \App\Models\Transaction::where('user_id', $student->id)
             ->where('payment_status', 'pending')
+            ->where('penalty_amount', '>', 0)
             ->sum('penalty_amount');
 
         $activeLoans = \App\Models\Transaction::where('user_id', $student->id)
@@ -997,16 +1026,44 @@ class BookController extends Controller
             })
             ->exists();
 
-        // Calculate clearance first
-        $isCleared = $pendingFines == 0 && $activeLoans < $maxLoans && !$hasLostBooks;
+        // Calculate accrued fines for overdue unreturned books
+        $overdueTransactions = \App\Models\Transaction::where('user_id', $student->id)
+            ->whereNull('returned_at')
+            ->where('due_date', '<', Carbon::today())
+            ->with(['bookAsset.bookTitle'])
+            ->get();
+
+        $accruedFines = 0;
+        $overdueDetails = [];
+        foreach ($overdueTransactions as $tx) {
+            $daysOverdue = (int) Carbon::parse($tx->due_date)->startOfDay()->diffInDays(Carbon::today());
+            $fine = $daysOverdue * $finePerDay;
+            $accruedFines += $fine;
+            $overdueDetails[] = [
+                'transaction_id' => $tx->id,
+                'book_title' => $tx->bookAsset->bookTitle->title ?? 'Unknown',
+                'asset_code' => $tx->bookAsset->asset_code ?? 'N/A',
+                'due_date' => $tx->due_date,
+                'days_overdue' => $daysOverdue,
+                'accrued_fine' => (float) $fine,
+            ];
+        }
+
+        $overdueCount = count($overdueTransactions);
+        $totalOwed = (float) $pendingFines + $accruedFines;
+
+        // Cleared only if: no fines (pending or accrued), no overdue, under loan limit, no lost books
+        $isCleared = $totalOwed == 0 && $overdueCount == 0 && $activeLoans < $maxLoans && !$hasLostBooks;
 
         // Only set block_reason if student is NOT cleared
         $blockReason = null;
         if (!$isCleared) {
             if ($hasLostBooks) {
                 $blockReason = 'Student has a LOST BOOK pending payment.';
+            } elseif ($overdueCount > 0) {
+                $blockReason = "Student has {$overdueCount} overdue book(s). Accruing fine: \u20b1" . number_format($accruedFines, 2);
             } elseif ($pendingFines > 0) {
-                $blockReason = 'Pending fines: ₱' . number_format($pendingFines, 2);
+                $blockReason = 'Pending fines: \u20b1' . number_format($pendingFines, 2);
             } elseif ($activeLoans >= $maxLoans) {
                 $blockReason = "Max {$maxLoans} books reached";
             }
@@ -1018,7 +1075,11 @@ class BookController extends Controller
             'course' => $student->course,
             'year_level' => $student->year_level,
             'section' => $student->section,
-            'pending_fines' => $pendingFines,
+            'pending_fines' => (float) $pendingFines,
+            'accrued_fines' => (float) $accruedFines,
+            'total_owed' => (float) $totalOwed,
+            'overdue_count' => $overdueCount,
+            'overdue_details' => $overdueDetails,
             'active_loans' => $activeLoans,
             'max_loans' => $maxLoans,
             'loan_days' => $loanDays,

@@ -386,7 +386,6 @@ class BookController extends Controller
     }
 
 
-    // NEW: Dashboard Statistics
     public function dashboardStats()
     {
         $totalTitles = \App\Models\BookTitle::count();
@@ -406,19 +405,36 @@ class BookController extends Controller
         $totalCopies = $availableCopies + $borrowedCopies + $damagedCopies + $lostCopies;
 
         // Count active transactions (where 'returned_at' is null)
-        $activeLoans = \App\Models\Transaction::whereNull('returned_at')->count();
+        $studentActiveLoans = \App\Models\Transaction::whereNull('returned_at')->count();
+        $facultyActiveLoans = \App\Models\FacultyTransaction::whereNull('returned_at')->count();
 
-        // Count overdue loans
-        $overdueLoans = \App\Models\Transaction::whereNull('returned_at')
+        // Format: "Student / Faculty"
+        $formattedLoans = "{$studentActiveLoans} / {$facultyActiveLoans}";
+
+        // Count active transactions breakdown
+        $loansBreakdown = [
+            'student' => $studentActiveLoans,
+            'faculty' => $facultyActiveLoans
+        ];
+
+        // Count overdue loans (Student + Faculty)
+        $studentOverdue = \App\Models\Transaction::whereNull('returned_at')
             ->where('due_date', '<', now())
             ->count();
+
+        $facultyOverdue = \App\Models\FacultyTransaction::whereNull('returned_at')
+            ->where('due_date', '<', now())
+            ->count();
+
+        $totalOverdue = $studentOverdue + $facultyOverdue;
 
         // Count total students (users who are NOT 'admin')
         $totalStudents = \App\Models\User::where('role', '!=', 'admin')->count();
 
         // Financial Stats
-        $totalFines = \App\Models\Transaction::sum('penalty_amount');
-        $collectedFines = \App\Models\Transaction::where('payment_status', 'paid')->sum('penalty_amount');
+        $totalFines = \App\Models\Transaction::sum('penalty_amount') + \App\Models\FacultyTransaction::sum('penalty_amount');
+        $collectedFines = \App\Models\Transaction::where('payment_status', 'paid')->sum('penalty_amount') +
+            \App\Models\FacultyTransaction::where('payment_status', 'paid')->sum('penalty_amount');
 
         return response()->json([
             'titles' => $totalTitles,
@@ -429,8 +445,9 @@ class BookController extends Controller
                 'damaged' => $damagedCopies,
                 'lost' => $lostCopies
             ],
-            'loans' => $activeLoans,
-            'overdue' => $overdueLoans,
+            'loans' => $formattedLoans,
+            'loans_breakdown' => $loansBreakdown,
+            'overdue' => $totalOverdue,
             'students' => $totalStudents,
             'total_fines' => $totalFines,
             'collected_fines' => $collectedFines

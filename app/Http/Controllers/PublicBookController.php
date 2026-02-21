@@ -41,12 +41,13 @@ class PublicBookController extends Controller
 
         // Apply Search Filter
         if ($search) {
-            $query->where(function ($q) use ($search) {
-                $q->where('title', 'like', "%$search%")
-                    ->orWhere('subtitle', 'like', "%$search%")
-                    ->orWhere('author', 'like', "%$search%")
-                    ->orWhere('isbn', 'like', "%$search%")
-                    ->orWhere('call_number', 'like', "%$search%");
+            $sanitizedSearch = addcslashes($search, '%_');
+            $query->where(function ($q) use ($sanitizedSearch) {
+                $q->where('title', 'like', "%$sanitizedSearch%")
+                    ->orWhere('subtitle', 'like', "%$sanitizedSearch%")
+                    ->orWhere('author', 'like', "%$sanitizedSearch%")
+                    ->orWhere('isbn', 'like', "%$sanitizedSearch%")
+                    ->orWhere('call_number', 'like', "%$sanitizedSearch%");
             });
         }
 

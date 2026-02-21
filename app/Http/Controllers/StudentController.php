@@ -40,11 +40,14 @@ class StudentController extends Controller
         return $prefix . str_pad($nextSequence, 4, '0', STR_PAD_LEFT);
     }
 
-    // 1. GET ALL STUDENTS
-    public function index()
+    // 1. GET ALL STUDENTS (Paginated for performance)
+    public function index(Request $request)
     {
+        $perPage = (int) $request->input('per_page', 15);
         // Get only users who are 'student'
-        return User::where('role', 'student')->orderBy('created_at', 'desc')->get();
+        return User::where('role', 'student')
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage);
     }
 
     // 2. REGISTER A NEW STUDENT
@@ -60,7 +63,7 @@ class StudentController extends Controller
             'email' => 'nullable|email|max:255', // Unique check handled manually below
             'phone_number' => 'nullable|string|max:20',
             'student_id' => 'required|string|max:50', // Ensure ID is provided as per frontend
-            'profile_picture' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048'
+            'profile_picture' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:204800'
         ]);
 
         $studentId = $request->student_id;
@@ -148,7 +151,7 @@ class StudentController extends Controller
             'section' => 'required|string',
             'email' => 'nullable|email',
             'phone_number' => 'nullable|string|max:20',
-            'profile_picture' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048'
+            'profile_picture' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:204800'
         ]);
 
         $data = [
@@ -231,17 +234,17 @@ class StudentController extends Controller
 
     /**
      * 5. GET TOP READERS LEADERBOARD
-     * Returns top 10 students ranked by total books borrowed (returned)
+     * Returns top 10 students ranked by total books borrowed (returned).
+     * Refactored to solve N+1 Query Problem (fetches everything in 4 queries instead of 41).
      */
     public function leaderboard()
     {
-        $leaderboard = User::where('role', 'student')
+        // 1. Get Top 10 Students
+        $topStudents = User::where('role', 'student')
             ->withCount([
                 'transactions as books_borrowed' => function ($query) {
                     $query->whereNotNull('returned_at');
-                }
-            ])
-            ->withCount([
+                },
                 'transactions as active_loans' => function ($query) {
                     $query->whereNull('returned_at');
                 }
@@ -249,21 +252,62 @@ class StudentController extends Controller
             ->having('books_borrowed', '>', 0)
             ->orderByDesc('books_borrowed')
             ->limit(10)
+            ->get();
+
+        if ($topStudents->isEmpty()) {
+            return response()->json([]);
+        }
+
+        $studentIds = $topStudents->pluck('id')->toArray();
+
+        // 2. Bulk Load Stats for all top 10 students at once
+        // On-Time Returns: Count where returned_at is not null and penalty is 0 or null
+        $onTimeStats = Transaction::whereIn('user_id', $studentIds)
+            ->whereNotNull('returned_at')
+            ->where(function ($q) {
+                $q->where('penalty_amount', 0)->orWhereNull('penalty_amount');
+            })
+            ->select('user_id', DB::raw('count(*) as count'))
+            ->groupBy('user_id')
+            ->pluck('count', 'user_id')
+            ->toArray();
+
+        // Category Stats: Group by user AND category
+        $categoryStats = Transaction::whereIn('user_id', $studentIds)
+            ->whereNotNull('returned_at')
+            ->join('book_assets', 'transactions.book_asset_id', '=', 'book_assets.id')
+            ->join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
+            ->select('transactions.user_id', 'book_titles.category', DB::raw('count(*) as count'))
+            ->groupBy('transactions.user_id', 'book_titles.category')
             ->get()
-            ->map(function ($student, $index) {
-                // Calculate badges count for each student
-                $badges = $this->calculateBadges($student->id);
-                return [
-                    'rank' => $index + 1,
-                    'id' => $student->id,
-                    'name' => $student->name,
-                    'student_id' => $student->student_id,
-                    'course' => $student->course,
-                    'books_borrowed' => $student->books_borrowed,
-                    'active_loans' => $student->active_loans,
-                    'badges_count' => count(array_filter($badges, fn($b) => $b['unlocked']))
-                ];
-            });
+            ->groupBy('user_id')
+            ->map(function ($items) {
+                return $items->pluck('count', 'category')->toArray();
+            })->toArray();
+
+        // 3. Map memory-loaded data to calculate badges
+        $leaderboard = $topStudents->map(function ($student, $index) use ($onTimeStats, $categoryStats) {
+
+            // Build the stats object for calculateBadges
+            $stats = [
+                'totalBorrowed' => $student->books_borrowed, // We already have this from withCount
+                'onTimeReturns' => $onTimeStats[$student->id] ?? 0,
+                'categoryStats' => $categoryStats[$student->id] ?? [],
+            ];
+
+            $badges = $this->calculateBadgesMemory($stats);
+
+            return [
+                'rank' => $index + 1,
+                'id' => $student->id,
+                'name' => $student->name,
+                'student_id' => $student->student_id,
+                'course' => $student->course,
+                'books_borrowed' => $student->books_borrowed,
+                'active_loans' => $student->active_loans,
+                'badges_count' => count(array_filter($badges, fn($b) => $b['unlocked']))
+            ];
+        });
 
         return response()->json($leaderboard);
     }
@@ -373,7 +417,8 @@ class StudentController extends Controller
     }
 
     /**
-     * Calculate badges for a student based on their borrowing history
+     * Calculate badges for a student based on their borrowing history (DB queries)
+     * Kept for single-student lookups (/achievements endpoint)
      */
     private function calculateBadges($studentId)
     {
@@ -390,11 +435,6 @@ class StudentController extends Controller
             })
             ->count();
 
-        // Get total transactions
-        $totalTransactions = Transaction::where('user_id', $studentId)
-            ->whereNotNull('returned_at')
-            ->count();
-
         // Get books by category
         $categoryStats = Transaction::where('user_id', $studentId)
             ->whereNotNull('returned_at')
@@ -404,6 +444,24 @@ class StudentController extends Controller
             ->groupBy('book_titles.category')
             ->pluck('count', 'category')
             ->toArray();
+
+        // Delegate to memory method
+        return $this->calculateBadgesMemory([
+            'totalBorrowed' => $totalBorrowed,
+            'onTimeReturns' => $onTimeReturns,
+            'categoryStats' => $categoryStats
+        ]);
+    }
+
+    /**
+     * Calculate badges using pre-loaded stats (Memory/Bulk mapping)
+     */
+    private function calculateBadgesMemory($stats)
+    {
+        $totalBorrowed = $stats['totalBorrowed'] ?? 0;
+        $onTimeReturns = $stats['onTimeReturns'] ?? 0;
+        $categoryStats = $stats['categoryStats'] ?? [];
+        $totalTransactions = $totalBorrowed; // In this context, total transactions that could be evaluated for badges equals total returned books.
 
         // Define all badges
         $badges = [
@@ -537,11 +595,12 @@ class StudentController extends Controller
         $builder = User::where('role', 'student');
 
         if (strlen($query) >= 1) {
-            $builder->where(function ($q) use ($query) {
-                $q->where('name', 'like', "%{$query}%")
-                    ->orWhere('student_id', 'like', "%{$query}%")
-                    ->orWhere('email', 'like', "%{$query}%")
-                    ->orWhere('course', 'like', "%{$query}%");
+            $sanitizedQuery = addcslashes($query, '%_');
+            $builder->where(function ($q) use ($sanitizedQuery) {
+                $q->where('name', 'like', "%{$sanitizedQuery}%")
+                    ->orWhere('student_id', 'like', "%{$sanitizedQuery}%")
+                    ->orWhere('email', 'like', "%{$sanitizedQuery}%")
+                    ->orWhere('course', 'like', "%{$sanitizedQuery}%");
             });
         }
 

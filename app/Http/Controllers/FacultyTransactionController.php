@@ -80,10 +80,10 @@ class FacultyTransactionController extends Controller
             ], 422);
         }
 
-        // Check if book is damaged
-        if ($bookAsset->is_damaged) {
+        // Check if book is available
+        if ($bookAsset->status !== 'available') {
             return response()->json([
-                'message' => 'This book is marked as damaged and cannot be borrowed.'
+                'message' => 'This book is not available for borrowing. Current status: ' . ucfirst($bookAsset->status)
             ], 422);
         }
 

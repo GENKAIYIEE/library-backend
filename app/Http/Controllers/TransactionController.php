@@ -290,8 +290,8 @@ class TransactionController extends Controller
     }
     public function index(Request $request)
     {
-        // Return all transactions with Student and Book details.
-        // Frontend handles filtering (tabs) and pagination client-side.
+        // Return all transactions with Student and Book details. Paginated to prevent crashes.
+        $perPage = (int) $request->input('per_page', 15);
         $transactions = \App\Models\Transaction::with([
             'user',
             'bookAsset' => function ($q) {
@@ -303,7 +303,7 @@ class TransactionController extends Controller
             }
         ])
             ->orderBy('created_at', 'desc')
-            ->get();
+            ->paginate($perPage);
 
         return response()->json($transactions);
     }

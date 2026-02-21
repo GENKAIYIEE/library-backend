@@ -64,7 +64,7 @@ class User extends Authenticatable
             if (filter_var($this->profile_picture, FILTER_VALIDATE_URL)) {
                 return $this->profile_picture;
             }
-            return asset('storage/' . $this->profile_picture);
+            return '/storage/' . $this->profile_picture;
         }
         return null; // Frontend handles fallback
     }

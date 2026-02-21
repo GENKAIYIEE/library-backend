@@ -64,9 +64,6 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
 
     // Settings Management (Admin)
     Route::get('/settings', [SettingController::class, 'index']);
-    Route::put('/settings', [SettingController::class, 'bulkUpdate']);
-    Route::put('/settings/{key}', [SettingController::class, 'update']);
-
 
     // Book Management
     Route::post('/books/title', [BookController::class, 'storeTitle']);
@@ -95,10 +92,6 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
 
     // Payment Management (NEW)
     Route::post('/transactions/{id}/pay', [TransactionController::class, 'markAsPaid']);
-    Route::post('/transactions/{id}/waive', [TransactionController::class, 'waiveFine']);
-    Route::post('/transactions/{id}/unpaid', [TransactionController::class, 'markAsUnpaid']); // NEW
-
-    Route::post('/transactions/force-delete-bulk', [TransactionController::class, 'forceDeleteBulk']); // NEW Bulk
 
 
     Route::get('/students/{id}/fines', [TransactionController::class, 'getStudentFines']); // NEW
@@ -184,8 +177,7 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::post('/faculty/return', [App\Http\Controllers\FacultyTransactionController::class, 'returnBook']);
     Route::get('/faculty/borrowed', [App\Http\Controllers\FacultyTransactionController::class, 'getBorrowedBooks']);
     Route::get('/faculty/transactions', [App\Http\Controllers\FacultyTransactionController::class, 'index']);
-    Route::post('/faculty/transactions/{id}/pay', [App\Http\Controllers\FacultyTransactionController::class, 'markAsPaid']);
-    Route::post('/faculty/transactions/{id}/waive', [App\Http\Controllers\FacultyTransactionController::class, 'waiveFine']);
+
 
     /*
     |--------------------------------------------------------------------------
@@ -201,6 +193,13 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
         }
     ], function () {
         Route::post('/settings/reset', [SettingController::class, 'reset']);
+        Route::put('/settings', [SettingController::class, 'bulkUpdate']);
+        Route::put('/settings/{key}', [SettingController::class, 'update']);
+        Route::post('/transactions/{id}/waive', [TransactionController::class, 'waiveFine']);
+        Route::post('/transactions/{id}/unpaid', [TransactionController::class, 'markAsUnpaid']);
+        Route::post('/faculty/transactions/{id}/pay', [App\Http\Controllers\FacultyTransactionController::class, 'markAsPaid']);
+        Route::post('/faculty/transactions/{id}/waive', [App\Http\Controllers\FacultyTransactionController::class, 'waiveFine']);
+        Route::post('/transactions/force-delete-bulk', [TransactionController::class, 'forceDeleteBulk']);
         Route::delete('/transactions/{id}/force', [TransactionController::class, 'forceDelete']);
         Route::delete('/students/{id}', [App\Http\Controllers\StudentController::class, 'destroy']);
         Route::delete('/books/{id}', [BookController::class, 'destroy']);

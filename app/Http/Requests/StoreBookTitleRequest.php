@@ -98,7 +98,7 @@ class StoreBookTitleRequest extends FormRequest
             'description' => 'nullable|string',
             'location' => 'nullable|string|max:255',
             'copies' => 'nullable|integer|min:1|max:100',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:204800',
         ];
     }
 

@@ -186,37 +186,43 @@ class FacultyTransactionController extends Controller
     }
 
     /**
-     * 3. GET FACULTY BORROWED BOOKS (for return lookup)
+     * 3. GET FACULTY BORROWED BOOKS (for return lookup) — Paginated
      */
-    public function getBorrowedBooks()
+    public function getBorrowedBooks(Request $request)
     {
-        $borrowed = FacultyTransaction::whereNull('returned_at')
+        $perPage = (int) $request->input('per_page', 50);
+
+        $paginated = FacultyTransaction::whereNull('returned_at')
             ->with(['faculty', 'bookAsset.bookTitle'])
             ->orderBy('due_date')
-            ->get()
-            ->filter(function ($tx) {
-                // Filter out transactions with missing book assets
-                return $tx->bookAsset !== null;
-            })
-            ->map(function ($tx) {
-                $isOverdue = Carbon::parse($tx->due_date)->lt(now());
-                return [
-                    'id' => $tx->id,
-                    'faculty_id' => $tx->faculty_id,
-                    'faculty_name' => $tx->faculty->name ?? 'Unknown',
-                    'faculty_code' => $tx->faculty->faculty_id ?? 'N/A',
-                    'department' => $tx->faculty->department ?? 'N/A',
-                    'book_title' => optional($tx->bookAsset->bookTitle)->title ?? 'Unknown',
-                    'asset_code' => $tx->bookAsset->asset_code ?? 'N/A',
-                    'borrowed_at' => $tx->borrowed_at,
-                    'due_date' => $tx->due_date,
-                    'is_overdue' => $isOverdue,
-                    'days_overdue' => $isOverdue ? now()->diffInDays($tx->due_date) : 0,
-                ];
-            })
-            ->values(); // Re-index array after filtering
+            ->paginate($perPage);
 
-        return response()->json($borrowed);
+        $paginated->getCollection()->transform(function ($tx) {
+            // Filter out transactions with missing book assets
+            if ($tx->bookAsset === null) {
+                return null;
+            }
+
+            $isOverdue = Carbon::parse($tx->due_date)->lt(now());
+            return [
+                'id' => $tx->id,
+                'faculty_id' => $tx->faculty_id,
+                'faculty_name' => $tx->faculty->name ?? 'Unknown',
+                'faculty_code' => $tx->faculty->faculty_id ?? 'N/A',
+                'department' => $tx->faculty->department ?? 'N/A',
+                'book_title' => optional($tx->bookAsset->bookTitle)->title ?? 'Unknown',
+                'asset_code' => $tx->bookAsset->asset_code ?? 'N/A',
+                'borrowed_at' => $tx->borrowed_at,
+                'due_date' => $tx->due_date,
+                'is_overdue' => $isOverdue,
+                'days_overdue' => $isOverdue ? now()->diffInDays($tx->due_date) : 0,
+            ];
+        });
+
+        // Filter out nulls (missing book assets)
+        $paginated->setCollection($paginated->getCollection()->filter()->values());
+
+        return response()->json($paginated);
     }
 
     /**
@@ -298,14 +304,15 @@ class FacultyTransactionController extends Controller
     }
 
     /**
-     * 7. GET ALL TRANSACTIONS (for history)
+     * 7. GET ALL TRANSACTIONS (for history) — Paginated
      */
-    public function index()
+    public function index(Request $request)
     {
+        $perPage = (int) $request->input('per_page', 50);
+
         $transactions = FacultyTransaction::with(['faculty', 'bookAsset.bookTitle'])
             ->orderByDesc('borrowed_at')
-            ->limit(100)
-            ->get();
+            ->paginate($perPage);
 
         return response()->json($transactions);
     }

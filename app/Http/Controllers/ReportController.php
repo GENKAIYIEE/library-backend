@@ -92,9 +92,8 @@ class ReportController extends Controller
             $query->where('transactions.borrowed_at', '<=', $endDate);
         }
 
-        // Fetch all results to calculate global rank accurately in PHP
-        // This avoids complex SQL window functions that may not be supported or compatible with pagination
-        $allResults = $query->orderByDesc('borrow_count')->get();
+        // Fetch results with a safety ceiling of 500 rows to prevent memory exhaustion
+        $allResults = $query->orderByDesc('borrow_count')->limit(500)->get();
 
         // Assign Ranks and Transform to Collection
         $rankedStudents = $allResults->map(function ($student, $index) {
@@ -196,7 +195,7 @@ class ReportController extends Controller
             $query->where('returned_at', '<=', $request->end_date);
         }
 
-        $results = $query->orderByDesc('month')->get();
+        $results = $query->orderByDesc('month')->limit(120)->get();
 
         // Calculate summary
         $summary = [
@@ -398,6 +397,7 @@ class ReportController extends Controller
                 }],
                 'penalty_amount'
             )
+            ->limit(1000) // Safety ceiling for large departments
             ->get();
 
         $studentIds = $students->pluck('id');

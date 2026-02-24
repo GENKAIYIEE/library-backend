@@ -37,9 +37,23 @@ class FacultyController extends Controller
     /**
      * 1. GET ALL FACULTIES
      */
-    public function index()
+    public function index(Request $request)
     {
-        return Faculty::orderBy('name')->get();
+        $perPage = $request->input('per_page', 20);
+        $search = $request->input('search', '');
+
+        $query = Faculty::orderBy('name');
+
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('faculty_id', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%")
+                    ->orWhere('department', 'like', "%{$search}%");
+            });
+        }
+
+        return $query->paginate($perPage);
     }
 
     /**

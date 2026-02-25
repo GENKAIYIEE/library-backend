@@ -36,19 +36,20 @@ class BookController extends Controller
         ])->orderBy('title')->paginate($perPage);
     }
 
-    // 2. SEARCH BOOKS
-    public function search($keyword)
+    // 2. SEARCH BOOKS (Paginated)
+    public function search(Request $request, $keyword)
     {
         // Escape SQL wildcard characters to prevent wildcard injection
         // Without this, a user could send "%" to enumerate all records
         // or use "_" patterns to probe data structure
         $sanitized = addcslashes($keyword, '%_');
+        $perPage = (int) $request->input('per_page', 20);
 
         return BookTitle::where('title', 'like', "%{$sanitized}%")
             ->orWhere('author', 'like', "%{$sanitized}%")
             ->orWhere('category', 'like', "%{$sanitized}%")
             ->with('assets') // Include the physical copies in results
-            ->get();
+            ->paginate($perPage);
     }
 
     /**
@@ -639,40 +640,40 @@ class BookController extends Controller
     public function getAvailableBooks(Request $request)
     {
         $course = $request->query('course');
+        $perPage = (int) $request->input('per_page', 50);
         $relevantCategories = $this->getCategoryForCourse($course);
 
-        $availableBooks = BookAsset::where('status', 'available')
+        $paginated = BookAsset::where('status', 'available')
             ->whereHas('bookTitle') // Only include assets with non-deleted book titles
-            ->with('bookTitle:id,title,author,category,image_path')
+            ->with('bookTitle:id,title,subtitle,author,category,image_path')
             ->orderBy('asset_code')
-            ->get()
-            ->map(function ($asset) use ($relevantCategories) {
-                $category = $asset->bookTitle->category ?? '';
-                $isRelevant = false;
+            ->paginate($perPage);
 
-                foreach ($relevantCategories as $rc) {
-                    if (stripos($category, $rc) !== false) {
-                        $isRelevant = true;
-                        break;
-                    }
+        $paginated->getCollection()->transform(function ($asset) use ($relevantCategories) {
+            $category = $asset->bookTitle->category ?? '';
+            $isRelevant = false;
+
+            foreach ($relevantCategories as $rc) {
+                if (stripos($category, $rc) !== false) {
+                    $isRelevant = true;
+                    break;
                 }
+            }
 
-                return [
-                    'asset_code' => $asset->asset_code,
-                    'status' => $asset->status, // Added status field
-                    'title' => $asset->bookTitle->title ?? 'Unknown',
-                    'subtitle' => $asset->bookTitle->subtitle ?? null, // Added subtitle
-                    'author' => $asset->bookTitle->author ?? 'Unknown',
-                    'image_path' => $asset->bookTitle->image_path ?? null,
-                    'category' => $category,
-                    'location' => $asset->building . ' - ' . $asset->aisle . ' - ' . $asset->shelf,
-                    'is_recommended' => $isRelevant
-                ];
-            })
-            ->sortByDesc('is_recommended')
-            ->values();
+            return [
+                'asset_code' => $asset->asset_code,
+                'status' => $asset->status,
+                'title' => $asset->bookTitle->title ?? 'Unknown',
+                'subtitle' => $asset->bookTitle->subtitle ?? null,
+                'author' => $asset->bookTitle->author ?? 'Unknown',
+                'image_path' => $asset->bookTitle->image_path ?? null,
+                'category' => $category,
+                'location' => $asset->building . ' - ' . $asset->aisle . ' - ' . $asset->shelf,
+                'is_recommended' => $isRelevant
+            ];
+        });
 
-        return response()->json($availableBooks);
+        return response()->json($paginated);
     }
 
     /**
@@ -754,10 +755,11 @@ class BookController extends Controller
         ]);
     }
 
-    // GET BORROWED BOOKS (for return dropdown)
+    // GET BORROWED BOOKS (for return dropdown) — Paginated
     public function getBorrowedBooks(Request $request)
     {
         $type = $request->query('type'); // 'student', 'faculty', or null (both)
+        $perPage = (int) $request->input('per_page', 50);
 
         $query = BookAsset::where('status', 'borrowed')
             ->whereHas('bookTitle'); // Only include assets with non-deleted book titles
@@ -782,8 +784,8 @@ class BookController extends Controller
             });
         }
 
-        $borrowedBooks = $query->with([
-            'bookTitle:id,title,author,image_path',
+        $paginated = $query->with([
+            'bookTitle:id,title,subtitle,author,image_path',
             'transactions' => function ($query) {
                 $query->whereNull('returned_at')
                     ->with('user:id,name,student_id');
@@ -794,53 +796,12 @@ class BookController extends Controller
             }
         ])
             ->orderBy('asset_code')
-            ->get()
-            ->map(function ($asset) use ($type) {
-                // If type is specifically 'student', only return if student transaction exists
-                if ($type === 'student') {
-                    $transaction = $asset->transactions->first();
-                    if ($transaction && $transaction->user) {
-                        return [
-                            'asset_code' => $asset->asset_code,
-                            'status' => $asset->status,
-                            'title' => $asset->bookTitle->title ?? 'Unknown',
-                            'subtitle' => $asset->bookTitle->subtitle ?? null,
-                            'author' => $asset->bookTitle->author ?? 'Unknown',
-                            'image_path' => $asset->bookTitle->image_path ?? null,
-                            'borrower' => $transaction->user->name,
-                            'student_id' => $transaction->user->student_id ?? 'N/A',
-                            'type' => 'Student',
-                            'due_date' => $transaction->due_date ?? null,
-                            'is_overdue' => $transaction->due_date ? now()->gt($transaction->due_date) : false
-                        ];
-                    }
-                    return null; // Should not happen given query constraints, but safe guard
-                }
+            ->paginate($perPage);
 
-                // If type is specifically 'faculty', only return if faculty transaction exists
-                if ($type === 'faculty') {
-                    $facultyTrans = $asset->facultyTransactions->first();
-                    if ($facultyTrans && $facultyTrans->faculty) {
-                        return [
-                            'asset_code' => $asset->asset_code,
-                            'status' => $asset->status,
-                            'title' => $asset->bookTitle->title ?? 'Unknown',
-                            'subtitle' => $asset->bookTitle->subtitle ?? null,
-                            'author' => $asset->bookTitle->author ?? 'Unknown',
-                            'image_path' => $asset->bookTitle->image_path ?? null,
-                            'borrower' => $facultyTrans->faculty->name,
-                            'student_id' => $facultyTrans->faculty->faculty_id ?? 'N/A',
-                            'type' => 'Faculty',
-                            'due_date' => $facultyTrans->due_date ?? null,
-                            'is_overdue' => $facultyTrans->due_date ? now()->gt($facultyTrans->due_date) : false
-                        ];
-                    }
-                    return null;
-                }
-
-                // Fallback (Mixed/No Type): Try student first, then faculty
+        $paginated->getCollection()->transform(function ($asset) use ($type) {
+            // If type is specifically 'student', only return if student transaction exists
+            if ($type === 'student') {
                 $transaction = $asset->transactions->first();
-
                 if ($transaction && $transaction->user) {
                     return [
                         'asset_code' => $asset->asset_code,
@@ -856,10 +817,12 @@ class BookController extends Controller
                         'is_overdue' => $transaction->due_date ? now()->gt($transaction->due_date) : false
                     ];
                 }
+                return null;
+            }
 
-                // Try faculty transaction
+            // If type is specifically 'faculty', only return if faculty transaction exists
+            if ($type === 'faculty') {
                 $facultyTrans = $asset->facultyTransactions->first();
-
                 if ($facultyTrans && $facultyTrans->faculty) {
                     return [
                         'asset_code' => $asset->asset_code,
@@ -875,13 +838,54 @@ class BookController extends Controller
                         'is_overdue' => $facultyTrans->due_date ? now()->gt($facultyTrans->due_date) : false
                     ];
                 }
-
                 return null;
-            })
-            ->filter() // Remove nulls
-            ->values();
+            }
 
-        return response()->json($borrowedBooks);
+            // Fallback (Mixed/No Type): Try student first, then faculty
+            $transaction = $asset->transactions->first();
+
+            if ($transaction && $transaction->user) {
+                return [
+                    'asset_code' => $asset->asset_code,
+                    'status' => $asset->status,
+                    'title' => $asset->bookTitle->title ?? 'Unknown',
+                    'subtitle' => $asset->bookTitle->subtitle ?? null,
+                    'author' => $asset->bookTitle->author ?? 'Unknown',
+                    'image_path' => $asset->bookTitle->image_path ?? null,
+                    'borrower' => $transaction->user->name,
+                    'student_id' => $transaction->user->student_id ?? 'N/A',
+                    'type' => 'Student',
+                    'due_date' => $transaction->due_date ?? null,
+                    'is_overdue' => $transaction->due_date ? now()->gt($transaction->due_date) : false
+                ];
+            }
+
+            // Try faculty transaction
+            $facultyTrans = $asset->facultyTransactions->first();
+
+            if ($facultyTrans && $facultyTrans->faculty) {
+                return [
+                    'asset_code' => $asset->asset_code,
+                    'status' => $asset->status,
+                    'title' => $asset->bookTitle->title ?? 'Unknown',
+                    'subtitle' => $asset->bookTitle->subtitle ?? null,
+                    'author' => $asset->bookTitle->author ?? 'Unknown',
+                    'image_path' => $asset->bookTitle->image_path ?? null,
+                    'borrower' => $facultyTrans->faculty->name,
+                    'student_id' => $facultyTrans->faculty->faculty_id ?? 'N/A',
+                    'type' => 'Faculty',
+                    'due_date' => $facultyTrans->due_date ?? null,
+                    'is_overdue' => $facultyTrans->due_date ? now()->gt($facultyTrans->due_date) : false
+                ];
+            }
+
+            return null;
+        });
+
+        // Filter out nulls from the paginated collection
+        $paginated->setCollection($paginated->getCollection()->filter()->values());
+
+        return response()->json($paginated);
     }
 
     /**

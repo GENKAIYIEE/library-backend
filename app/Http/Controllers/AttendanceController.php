@@ -141,7 +141,7 @@ class AttendanceController extends Controller
 
         // Check if we need all records for reporting
         if ($request->has('all') && $request->all == 'true') {
-            $logs = $query->get();
+            $logs = $query->limit(5000)->get(); // Safety ceiling for reporting
             
              // Append profile_picture_url to each user
             $logs->each(function ($log) {

@@ -275,6 +275,28 @@ class ReportController extends Controller
                         ]);
                     }
                     break;
+
+                case 'transactions':
+                    fputcsv($file, ['ID', 'Student Name', 'Student ID', 'Book Title', 'Asset Code', 'Borrowed At', 'Due Date', 'Returned At', 'Status', 'Penalty', 'Payment Status']);
+                    $data = Transaction::with(['user', 'bookAsset.bookTitle'])
+                        ->orderBy('created_at', 'desc')
+                        ->get();
+                    foreach ($data as $row) {
+                        fputcsv($file, [
+                            $row->id,
+                            $row->user->name ?? 'N/A',
+                            $row->user->student_id ?? 'N/A',
+                            $row->bookAsset->bookTitle->title ?? 'N/A',
+                            $row->bookAsset->asset_code ?? 'N/A',
+                            $row->borrowed_at ? $row->borrowed_at->format('Y-m-d H:i') : '',
+                            $row->due_date ? $row->due_date->format('Y-m-d') : '',
+                            $row->returned_at ? $row->returned_at->format('Y-m-d H:i') : '',
+                            $row->returned_at ? 'Returned' : 'Borrowed',
+                            $row->penalty_amount ? '₱' . number_format($row->penalty_amount, 2) : '₱0.00',
+                            $row->payment_status ?? 'N/A',
+                        ]);
+                    }
+                    break;
             }
 
             fclose($file);

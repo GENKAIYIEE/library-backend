@@ -714,4 +714,82 @@ class StudentController extends Controller
 
         return response()->json($students);
     }
+
+    // ========================================
+    // STUDENT PROMOTION
+    // ========================================
+
+    /**
+     * Promote a single student to the next year level.
+     * Maximum year level is 4.
+     */
+    public function promote($id)
+    {
+        $student = User::find($id);
+
+        if (!$student || $student->role !== 'student') {
+            return response()->json(['message' => 'Student not found'], 404);
+        }
+
+        if ($student->year_level >= 4) {
+            return response()->json([
+                'message' => 'Student is already at the maximum year level (Year 4).'
+            ], 422);
+        }
+
+        $student->year_level = $student->year_level + 1;
+        $student->save();
+
+        return response()->json([
+            'message' => "{$student->name} has been promoted to Year {$student->year_level}.",
+            'student' => $student
+        ]);
+    }
+
+    /**
+     * Bulk promote multiple students to the next year level.
+     * Accepts { student_ids: [1, 2, 3, ...] }
+     */
+    public function bulkPromote(Request $request)
+    {
+        $request->validate([
+            'student_ids' => 'required|array|min:1',
+            'student_ids.*' => 'integer|exists:users,id',
+        ]);
+
+        $promoted = 0;
+        $skipped = [];
+
+        DB::beginTransaction();
+
+        try {
+            $students = User::whereIn('id', $request->student_ids)
+                ->where('role', 'student')
+                ->get();
+
+            foreach ($students as $student) {
+                if ($student->year_level >= 4) {
+                    $skipped[] = $student->name;
+                    continue;
+                }
+
+                $student->year_level = $student->year_level + 1;
+                $student->save();
+                $promoted++;
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => "{$promoted} student(s) promoted successfully.",
+                'promoted' => $promoted,
+                'skipped' => $skipped,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Bulk promotion failed: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

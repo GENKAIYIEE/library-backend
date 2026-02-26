@@ -114,6 +114,10 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/students/courses/summary', [App\Http\Controllers\StudentController::class, 'getCourseSummary']);
     Route::get('/students/by-course/{course}', [App\Http\Controllers\StudentController::class, 'getStudentsByCourse'])->where('course', '.*');
 
+    // Student Promotion
+    Route::post('/students/bulk-promote', [App\Http\Controllers\StudentController::class, 'bulkPromote']);
+    Route::post('/students/{id}/promote', [App\Http\Controllers\StudentController::class, 'promote']);
+
     // Gamification: Leaderboard & Achievements
     Route::get('/students/leaderboard', [App\Http\Controllers\StudentController::class, 'leaderboard']);
     Route::get('/students/{id}/achievements', [App\Http\Controllers\StudentController::class, 'achievements']);

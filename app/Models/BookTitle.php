@@ -19,6 +19,7 @@ class BookTitle extends Model
         'lccn',
         'issn',
         'category',
+        'college',
         'publisher',
         'place_of_publication',
         'published_year',

@@ -68,6 +68,7 @@ class StoreBookTitleRequest extends FormRequest
             'title' => 'required|string|max:255',
             'author' => 'required|string|max:255',
             'category' => 'required|string|max:100',
+            'college' => 'nullable|string|in:COLLEGE OF CRIMINOLOGY,COLLEGE OF MARITIME,COLLEGE OF INFORMATION TECHNOLOGY,COLLEGE OF HOSPITALITY & TOURISM MANAGEMENT,COLLEGE OF BUSINESS ADMINISTRATION,COLLEGE OF EDUCATION',
             'isbn' => 'nullable|string|max:50',
             'accession_no' => [
                 'nullable',

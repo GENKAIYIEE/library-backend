@@ -295,6 +295,7 @@ class BookController extends Controller
                 'subtitle' => $fields['subtitle'] ?? null,
                 'author' => $fields['author'],
                 'category' => $fields['category'],
+            'college' => $fields['college'] ?? null,
                 'isbn' => $isbn,
 
                 'lccn' => $fields['lccn'] ?? null,

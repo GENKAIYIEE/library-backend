@@ -1427,6 +1427,132 @@ class BookController extends Controller
     }
 
     /**
+     * Get college summary with book counts.
+     * Returns all unique colleges with total books and available count.
+     * Books without a college are grouped into "Others".
+     */
+    public function getCollegeSummary()
+    {
+        // Define the SQL expression to coalesce null/empty to 'GENERAL'
+        $collegeGroupExpr = "COALESCE(NULLIF(college, ''), 'GENERAL')";
+        $collegeGroupJoinedExpr = "COALESCE(NULLIF(book_titles.college, ''), 'GENERAL')";
+
+        // 1. Title counts per college (1 query)
+        $colleges = BookTitle::selectRaw("$collegeGroupExpr as college_group, COUNT(*) as total_books")
+            ->groupByRaw($collegeGroupExpr)
+            ->orderByRaw($collegeGroupExpr)
+            ->get();
+
+        // 2. Available titles per college (1 query)
+        $availableTitles = BookTitle::whereHas('assets', function ($q) {
+                $q->where('status', 'available');
+            })
+            ->selectRaw("$collegeGroupExpr as college_group, COUNT(*) as cnt")
+            ->groupByRaw($collegeGroupExpr)
+            ->pluck('cnt', 'college_group');
+
+        // 3. Asset counts per college (1 query)
+        $assetCounts = BookAsset::join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
+            ->selectRaw("$collegeGroupJoinedExpr as college_group, COUNT(*) as total_copies, SUM(CASE WHEN book_assets.status = ? THEN 1 ELSE 0 END) as available_copies", ['available'])
+            ->groupByRaw($collegeGroupJoinedExpr)
+            ->get()
+            ->keyBy('college_group');
+
+        // 4. Count distinct categories per college (1 query)
+        $categoryCounts = BookTitle::selectRaw("$collegeGroupExpr as college_group, COUNT(DISTINCT category) as category_count")
+            ->groupByRaw($collegeGroupExpr)
+            ->pluck('category_count', 'college_group');
+
+        // Map results
+        $result = $colleges->map(function ($col) use ($availableTitles, $assetCounts, $categoryCounts) {
+            $collegeKey = $col->college_group;
+            $assetData = $assetCounts->get($collegeKey);
+
+            return [
+                'college' => $collegeKey,
+                'total_books' => $col->total_books,
+                'available_titles' => (int) ($availableTitles[$collegeKey] ?? 0),
+                'total_copies' => (int) ($assetData->total_copies ?? 0),
+                'available_copies' => (int) ($assetData->available_copies ?? 0),
+                'category_count' => (int) ($categoryCounts[$collegeKey] ?? 0),
+            ];
+        });
+
+        // Optional: Ensure "GENERAL" is always at the top if it exists
+        $sortedResult = $result->sortBy(function ($item) {
+            return $item['college'] === 'GENERAL' ? -1 : 0;
+        })->values();
+
+        return response()->json($sortedResult);
+    }
+
+    /**
+     * Get category summary within a specific college.
+     * Returns all unique categories with book counts filtered by college.
+     *
+     * @param string $college The college to filter by ("GENERAL" for null/empty)
+     */
+    public function getCategorySummaryByCollege($college)
+    {
+        $college = urldecode($college);
+
+        // Define a closure to apply the correct college filter
+        $applyCollegeFilter = function ($query) use ($college) {
+            if ($college === 'GENERAL') {
+                $query->where(function ($q) {
+                    $q->whereNull('college')->orWhere('college', '');
+                });
+            } else {
+                $query->where('college', $college);
+            }
+        };
+
+        $applyJoinedCollegeFilter = function ($query) use ($college) {
+            if ($college === 'GENERAL') {
+                $query->where(function ($q) {
+                    $q->whereNull('book_titles.college')->orWhere('book_titles.college', '');
+                });
+            } else {
+                $query->where('book_titles.college', $college);
+            }
+        };
+
+        // 1. Title counts per category
+        $categoriesQuery = BookTitle::selectRaw('category, COUNT(*) as total_books');
+        $applyCollegeFilter($categoriesQuery);
+        $categories = $categoriesQuery->groupBy('category')->orderBy('category')->get();
+
+        // 2. Available titles per category
+        $availableTitlesQuery = BookTitle::whereHas('assets', function ($q) {
+            $q->where('status', 'available');
+        })->selectRaw('category, COUNT(*) as cnt');
+        $applyCollegeFilter($availableTitlesQuery);
+        $availableTitles = $availableTitlesQuery->groupBy('category')->pluck('cnt', 'category');
+
+        // 3. Asset counts per category
+        $assetCountsQuery = BookAsset::join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
+            ->selectRaw('book_titles.category, COUNT(*) as total_copies, SUM(CASE WHEN book_assets.status = ? THEN 1 ELSE 0 END) as available_copies', ['available']);
+        $applyJoinedCollegeFilter($assetCountsQuery);
+        $assetCounts = $assetCountsQuery->groupBy('book_titles.category')->get()->keyBy('category');
+
+        // Map results
+        $result = $categories->map(function ($cat) use ($availableTitles, $assetCounts) {
+            $categoryKey = $cat->category;
+            $assetData = $assetCounts->get($categoryKey);
+
+            return [
+                'category' => $categoryKey ?: 'Uncategorized',
+                'total_books' => $cat->total_books,
+                'available_titles' => (int) ($availableTitles[$categoryKey] ?? 0),
+                'total_copies' => (int) ($assetData->total_copies ?? 0),
+                'available_copies' => (int) ($assetData->available_copies ?? 0),
+            ];
+        });
+
+        return response()->json($result);
+    }
+
+    /**
      * Get category summary with book counts.
      * Returns all unique categories with total books and available count.
      */
@@ -1476,12 +1602,13 @@ class BookController extends Controller
     /**
      * Get paginated books by category.
      * @param string $category The category to filter by
-     * @param Request $request For pagination (page, per_page) and search
+     * @param Request $request For pagination (page, per_page), search, and optional college filter
      */
     public function getBooksByCategory(Request $request, $category)
     {
         $perPage = $request->input('per_page', 20);
         $search = $request->input('search', '');
+        $college = $request->input('college', '');
 
         $query = BookTitle::where('category', $category)
             ->with([
@@ -1504,6 +1631,17 @@ class BookController extends Controller
                 },
                 'assets as total_copies'
             ]);
+
+        // Apply college filter if provided
+        if ($college) {
+            if ($college === 'GENERAL') {
+                $query->where(function ($q) {
+                    $q->whereNull('college')->orWhere('college', '');
+                });
+            } else {
+                $query->where('college', $college);
+            }
+        }
 
         // Apply search filter if provided
         if ($search) {

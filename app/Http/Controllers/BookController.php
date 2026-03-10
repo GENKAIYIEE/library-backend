@@ -1431,37 +1431,54 @@ class BookController extends Controller
      * Returns all unique colleges with total books and available count.
      * Books without a college are grouped into "Others".
      */
-    public function getCollegeSummary()
+    public function getCollegeSummary(Request $request)
     {
+        $year = $request->input('year', '');
+
         // Define the SQL expression to coalesce null/empty to 'GENERAL'
         $collegeGroupExpr = "COALESCE(NULLIF(college, ''), 'GENERAL')";
         $collegeGroupJoinedExpr = "COALESCE(NULLIF(book_titles.college, ''), 'GENERAL')";
 
         // 1. Title counts per college (1 query)
-        $colleges = BookTitle::selectRaw("$collegeGroupExpr as college_group, COUNT(*) as total_books")
+        $collegesQuery = BookTitle::selectRaw("$collegeGroupExpr as college_group, COUNT(*) as total_books")
             ->groupByRaw($collegeGroupExpr)
-            ->orderByRaw($collegeGroupExpr)
-            ->get();
+            ->orderByRaw($collegeGroupExpr);
+        
+        if ($year) {
+            $collegesQuery->where('copyright_year', $year);
+        }
+        $colleges = $collegesQuery->get();
 
         // 2. Available titles per college (1 query)
-        $availableTitles = BookTitle::whereHas('assets', function ($q) {
+        $availableTitlesQuery = BookTitle::whereHas('assets', function ($q) {
                 $q->where('status', 'available');
             })
             ->selectRaw("$collegeGroupExpr as college_group, COUNT(*) as cnt")
-            ->groupByRaw($collegeGroupExpr)
-            ->pluck('cnt', 'college_group');
+            ->groupByRaw($collegeGroupExpr);
+
+        if ($year) {
+            $availableTitlesQuery->where('copyright_year', $year);
+        }
+        $availableTitles = $availableTitlesQuery->pluck('cnt', 'college_group');
 
         // 3. Asset counts per college (1 query)
-        $assetCounts = BookAsset::join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
+        $assetCountsQuery = BookAsset::join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
             ->selectRaw("$collegeGroupJoinedExpr as college_group, COUNT(*) as total_copies, SUM(CASE WHEN book_assets.status = ? THEN 1 ELSE 0 END) as available_copies", ['available'])
-            ->groupByRaw($collegeGroupJoinedExpr)
-            ->get()
-            ->keyBy('college_group');
+            ->groupByRaw($collegeGroupJoinedExpr);
+
+        if ($year) {
+            $assetCountsQuery->where('book_titles.copyright_year', $year);
+        }
+        $assetCounts = $assetCountsQuery->get()->keyBy('college_group');
 
         // 4. Count distinct categories per college (1 query)
-        $categoryCounts = BookTitle::selectRaw("$collegeGroupExpr as college_group, COUNT(DISTINCT category) as category_count")
-            ->groupByRaw($collegeGroupExpr)
-            ->pluck('category_count', 'college_group');
+        $categoryCountsQuery = BookTitle::selectRaw("$collegeGroupExpr as college_group, COUNT(DISTINCT category) as category_count")
+            ->groupByRaw($collegeGroupExpr);
+
+        if ($year) {
+            $categoryCountsQuery->where('copyright_year', $year);
+        }
+        $categoryCounts = $categoryCountsQuery->pluck('category_count', 'college_group');
 
         // Map results
         $result = $colleges->map(function ($col) use ($availableTitles, $assetCounts, $categoryCounts) {
@@ -1492,8 +1509,9 @@ class BookController extends Controller
      *
      * @param string $college The college to filter by ("GENERAL" for null/empty)
      */
-    public function getCategorySummaryByCollege($college)
+    public function getCategorySummaryByCollege(Request $request, $college)
     {
+        $year = $request->input('year', '');
         $college = urldecode($college);
 
         // Define a closure to apply the correct college filter
@@ -1520,6 +1538,9 @@ class BookController extends Controller
         // 1. Title counts per category
         $categoriesQuery = BookTitle::selectRaw('category, COUNT(*) as total_books');
         $applyCollegeFilter($categoriesQuery);
+        if ($year) {
+            $categoriesQuery->where('copyright_year', $year);
+        }
         $categories = $categoriesQuery->groupBy('category')->orderBy('category')->get();
 
         // 2. Available titles per category
@@ -1527,12 +1548,18 @@ class BookController extends Controller
             $q->where('status', 'available');
         })->selectRaw('category, COUNT(*) as cnt');
         $applyCollegeFilter($availableTitlesQuery);
+        if ($year) {
+            $availableTitlesQuery->where('copyright_year', $year);
+        }
         $availableTitles = $availableTitlesQuery->groupBy('category')->pluck('cnt', 'category');
 
         // 3. Asset counts per category
         $assetCountsQuery = BookAsset::join('book_titles', 'book_assets.book_title_id', '=', 'book_titles.id')
             ->selectRaw('book_titles.category, COUNT(*) as total_copies, SUM(CASE WHEN book_assets.status = ? THEN 1 ELSE 0 END) as available_copies', ['available']);
         $applyJoinedCollegeFilter($assetCountsQuery);
+        if ($year) {
+            $assetCountsQuery->where('book_titles.copyright_year', $year);
+        }
         $assetCounts = $assetCountsQuery->groupBy('book_titles.category')->get()->keyBy('category');
 
         // Map results
@@ -1642,6 +1669,75 @@ class BookController extends Controller
                 $query->where('college', $college);
             }
         }
+
+        // Apply search filter if provided
+        if ($search) {
+            $sanitizedSearch = addcslashes($search, '%_');
+            $query->where(function ($q) use ($sanitizedSearch) {
+                $q->where('title', 'like', "%{$sanitizedSearch}%")
+                    ->orWhere('author', 'like', "%{$sanitizedSearch}%")
+                    ->orWhere('isbn', 'like', "%{$sanitizedSearch}%")
+                    ->orWhere('call_number', 'like', "%{$sanitizedSearch}%");
+            });
+        }
+
+        // Apply year classification filter if provided
+        $year = $request->input('year', '');
+        if ($year) {
+            $query->where('copyright_year', $year);
+        }
+
+        $books = $query->orderBy('title')->paginate($perPage);
+
+        return response()->json($books);
+    }
+
+    /**
+     * Get summary of total books per year.
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getYearSummary()
+    {
+        $years = BookTitle::selectRaw('copyright_year as year, COUNT(*) as total_books')
+            ->whereNotNull('copyright_year')
+            ->groupBy('copyright_year')
+            ->orderBy('copyright_year', 'desc')
+            ->get();
+
+        return response()->json($years);
+    }
+
+    /**
+     * Get paginated books by year (across all colleges/categories).
+     * @param Request $request For pagination (page, per_page) and search
+     * @param int $year The copyright year to filter by
+     */
+    public function getBooksByYear(Request $request, $year)
+    {
+        $perPage = $request->input('per_page', 20);
+        $search = $request->input('search', '');
+
+        $query = BookTitle::where('copyright_year', $year)
+            ->with([
+                'assets' => function ($q) {
+                    $q->orderBy('asset_code');
+                }
+            ])
+            ->withCount([
+                'assets as available_copies' => function ($query) {
+                    $query->where('status', 'available');
+                },
+                'assets as borrowed_copies' => function ($query) {
+                    $query->where('status', 'borrowed');
+                },
+                'assets as damaged_copies' => function ($query) {
+                    $query->where('status', 'damaged');
+                },
+                'assets as lost_copies' => function ($query) {
+                    $query->where('status', 'lost');
+                },
+                'assets as total_copies'
+            ]);
 
         // Apply search filter if provided
         if ($search) {

@@ -88,6 +88,10 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/books/colleges/summary', [BookController::class, 'getCollegeSummary']);
     Route::get('/books/colleges/{college}/categories', [BookController::class, 'getCategorySummaryByCollege'])->where('college', '.*');
 
+    // Year-Based Inventory Filter
+    Route::get('/books/years/summary', [BookController::class, 'getYearSummary']);
+    Route::get('/books/by-year/{year}', [BookController::class, 'getBooksByYear']);
+
     // Circulation (The New Stuff)
     Route::post('/borrow', [TransactionController::class, 'borrow']);
     Route::post('/return', [TransactionController::class, 'returnBook']);

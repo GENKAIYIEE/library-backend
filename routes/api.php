@@ -84,6 +84,10 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::get('/books/categories/summary', [BookController::class, 'getCategorySummary']);
     Route::get('/books/by-category/{category}', [BookController::class, 'getBooksByCategory'])->where('category', '.*');
 
+    // College-Based Inventory Navigation (3-level: College → Category → Books)
+    Route::get('/books/colleges/summary', [BookController::class, 'getCollegeSummary']);
+    Route::get('/books/colleges/{college}/categories', [BookController::class, 'getCategorySummaryByCollege'])->where('college', '.*');
+
     // Circulation (The New Stuff)
     Route::post('/borrow', [TransactionController::class, 'borrow']);
     Route::post('/return', [TransactionController::class, 'returnBook']);
